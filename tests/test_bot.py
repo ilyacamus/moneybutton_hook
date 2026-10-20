@@ -1,6 +1,7 @@
 """Drive the real aiogram dispatcher with fake Telegram and Claude backends."""
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime
 from itertools import count
 
@@ -84,7 +85,7 @@ def env(tmp_path, client):
         await dp.feed_update(bot, Update(update_id=next(ids), **update_kwargs))
 
     yield type("Env", (), dict(text=text, press=press, raw=raw, session=session, botdb=botdb, memory=memory,
-                              settings=settings, bot=bot, user=user, chat=chat, client=client))
+                              settings=settings, bot=bot, user=user, chat=chat, client=client, dp=dp))
     handlers.router._parent_router = None
     memory.close()
 
@@ -208,3 +209,53 @@ async def test_channel_commands_answer(env):
     assert "доверять" in env.session.texts()[-1]
     await env.text("/myreel")
     assert "skip" in env.session.texts()[-1]
+
+
+def private(env, owners):
+    """Switch the running bot to private mode for these owners."""
+    env.settings = replace(env.settings, private=True, admin_ids=frozenset(owners))
+    env.dp["settings"] = env.settings
+
+
+async def test_private_bot_refuses_strangers(env):
+    private(env, {USER_ID + 1})
+    await env.text("/start")
+    await env.text("/score Хотите больше клиентов?")
+    assert env.session.texts() == [f"🔒 Это личный бот, он закрыт для других пользователей. "
+                                   f"Ваш Telegram id: <code>{USER_ID}</code>"] * 2
+    assert env.botdb.get_user(USER_ID) is None and env.client.calls == []  # never stored, never analysed
+    await env.press("mode:score")
+    answer = env.session.of("AnswerCallbackQuery")[-1]
+    assert answer.show_alert and "закрыт" in answer.text
+
+
+async def test_private_bot_serves_its_owner(env):
+    private(env, {USER_ID})
+    env.botdb.apply_owner_niche(env.settings.admin_ids, "Крипта и трейдинг")
+    await env.text("/start")
+    welcome = env.session.texts()[-1]
+    assert "Личный HookMaster" in welcome and "Крипта и трейдинг" in welcome and "модель на" in welcome
+    await env.text("/balance")
+    assert "без ограничений" in env.session.texts()[-1] and env.session.of("SendInvoice") == []
+    await env.text("/score Хотите больше клиентов из таргета?")
+    report = env.session.texts()[-1]
+    assert "Рабочий хук" in report and "Потенциал в нише «Крипта и трейдинг»" in report
+    assert env.botdb.credits(USER_ID) == 2  # the owner is never charged
+
+
+def test_owner_niche_and_private_settings(monkeypatch, tmp_path):
+    from telegram_bot.__main__ import commands
+
+    botdb = BotStorage(MemoryStore(tmp_path / "o.db"))
+    botdb.memory.update_profile(workspace_of(2), niche="фитнес")
+    assert botdb.apply_owner_niche({1, 2}, "Крипта и трейдинг") == [1]  # a chosen niche is kept
+    assert botdb.memory.get_profile(workspace_of(2))["niche"] == "фитнес"
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "42:TEST")
+    monkeypatch.setenv("BOT_PRIVATE", "1")
+    monkeypatch.delenv("ADMIN_IDS", raising=False)
+    with pytest.raises(SystemExit, match="ADMIN_IDS"):
+        Settings.from_env()
+    monkeypatch.setenv("ADMIN_IDS", "123")
+    settings = Settings.from_env()
+    assert settings.private and settings.allowed(123) and not settings.allowed(5)
+    assert "balance" not in {c.command for c in commands(settings)}

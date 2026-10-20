@@ -1,10 +1,11 @@
-"""Run the bot: ``python -m telegram_bot`` (long polling)."""
+"""Run the bot: ``python -m telegram_bot`` (long polling); ``--check`` verifies the setup and exits."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -12,7 +13,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
-from hookbot.core import instagram
+from hookbot.core import breakout, instagram, niches
 from hookbot.core.memory import MemoryStore
 from hookbot.engine import HookEngine
 from hookbot.scout import Scout, ScoutConfig
@@ -39,13 +40,57 @@ COMMANDS = [
     BotCommand(command="balance", description="Баланс и пополнение"),
     BotCommand(command="help", description="Справка"),
 ]
+PRIVATE_HIDDEN = {"balance"}  # no payments in private mode
+
+
+def commands(settings: Settings) -> list[BotCommand]:
+    return [c for c in COMMANDS if not (settings.private and c.command in PRIVATE_HIDDEN)]
+
+
+async def check(settings: Settings, memory: MemoryStore) -> int:
+    """Pre-flight: Telegram token, Claude key, owners, niche and its model. Prints each step; 0 when all pass."""
+    ok = True
+
+    def step(passed: bool, text: str) -> None:
+        nonlocal ok
+        ok = ok and passed
+        print(("✅ " if passed else "❌ ") + text)
+
+    bot = Bot(settings.bot_token)
+    try:
+        me = await bot.get_me()
+        step(True, f"Telegram: бот @{me.username}")
+    except Exception as exc:  # noqa: BLE001 - report any failure of the token check
+        step(False, f"Telegram: токен не принят ({exc}). Проверьте TELEGRAM_BOT_TOKEN от @BotFather")
+    finally:
+        await bot.session.close()
+    step(bool(os.getenv("ANTHROPIC_API_KEY")), "Claude API: ключ ANTHROPIC_API_KEY " +
+         ("задан" if os.getenv("ANTHROPIC_API_KEY") else "не задан (console.anthropic.com → API keys)"))
+    mode = "личный: отвечает только " if settings.private else "открытый; админы: "
+    step(bool(settings.admin_ids), "Доступ: " + mode + (", ".join(map(str, sorted(settings.admin_ids))) or "никто"))
+    for admin in sorted(settings.admin_ids):
+        niche = memory.get_profile(workspace_of(admin))["niche"] or settings.owner_niche
+        model = breakout.latest(memory, niches.canonical(niche)) if niche else None
+        if not niche:
+            step(False, f"Ниша владельца {admin}: не задана (OWNER_NICHE или /niche в боте)")
+        elif model:
+            step(True, f"Ниша владельца {admin}: {niche} — модель на {model['n']} роликах, качество {model['quality']}")
+        else:
+            step(True, f"Ниша владельца {admin}: {niche} — модели ниши пока нет, оценки по рубрике и науке")
+    print("Готово к запуску: python -m telegram_bot" if ok else "Исправьте пункты с ❌ и запустите проверку снова.")
+    return 0 if ok else 1
 
 
 async def main() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = Settings.from_env()
     memory = MemoryStore(settings.db_path)
+    if "--check" in sys.argv[1:]:
+        code = await check(settings, memory)
+        memory.close()
+        raise SystemExit(code)
     botdb = BotStorage(memory)
+    botdb.apply_owner_niche(settings.admin_ids, settings.owner_niche)
     engine = HookEngine(memory, reflect_every=settings.reflect_every)
 
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -75,7 +120,9 @@ async def main() -> None:
     dp["scout"] = scout
     dp.include_router(router)
 
-    await bot.set_my_commands(COMMANDS)
+    await bot.set_my_commands(commands(settings))
+    if settings.private:
+        logging.getLogger(__name__).info("Private mode: only %s", sorted(settings.admin_ids))
     tasks = [asyncio.create_task(followup_loop(bot, memory, botdb, settings))]
     if os.getenv("SCOUT_ENABLED") == "1":
         tasks.append(asyncio.create_task(scout.run_forever()))

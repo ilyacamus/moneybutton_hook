@@ -87,6 +87,16 @@ class BotStorage:
         row = self.conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
         return dict(row) if row else None
 
+    def apply_owner_niche(self, user_ids: frozenset[int] | set[int], niche: str) -> list[int]:
+        """Give the owners' workspaces their niche unless they already chose one. Returns who got it."""
+        changed = []
+        for user_id in sorted(user_ids):
+            workspace = workspace_of(user_id)
+            if niche and not self.memory.get_profile(workspace)["niche"]:
+                self.memory.update_profile(workspace, niche=niche)
+                changed.append(user_id)
+        return changed
+
     def credits(self, user_id: int) -> int:
         user = self.get_user(user_id)
         return user["credits"] if user else 0

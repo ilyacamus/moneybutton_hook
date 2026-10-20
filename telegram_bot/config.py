@@ -56,6 +56,8 @@ class Settings:
     max_concurrent: int = 4
     packs: tuple[Pack, ...] = parse_packs("start:15:200,pro:50:600,studio:150:1500")
     support_contact: str = ""
+    private: bool = False  # only ADMIN_IDS may use the bot; nobody else is answered beyond a refusal
+    owner_niche: str = ""  # the owners' niche, set in their profile at start (e.g. «Крипта и трейдинг»)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -63,6 +65,9 @@ class Settings:
         if not token:
             raise SystemExit("TELEGRAM_BOT_TOKEN is not set")
         admins = frozenset(int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x)
+        private = os.getenv("BOT_PRIVATE") == "1"
+        if private and not admins:
+            raise SystemExit("BOT_PRIVATE=1 needs ADMIN_IDS: your Telegram user id (send any message to @userinfobot)")
         kwargs = dict(
             bot_token=token,
             db_path=os.getenv("HOOKBOT_DB", cls.db_path),
@@ -73,10 +78,15 @@ class Settings:
             reflect_every=int(os.getenv("REFLECT_EVERY", cls.reflect_every)),
             max_concurrent=int(os.getenv("MAX_CONCURRENT", cls.max_concurrent)),
             support_contact=os.getenv("SUPPORT_CONTACT", ""),
+            private=private,
+            owner_niche=os.getenv("OWNER_NICHE", ""),
         )
         if os.getenv("HOOKBOT_PACKS"):
             kwargs["packs"] = parse_packs(os.environ["HOOKBOT_PACKS"])
         return cls(**kwargs)
+
+    def allowed(self, user_id: int) -> bool:
+        return not self.private or user_id in self.admin_ids
 
     def pack(self, pack_id: str) -> Pack | None:
         return next((p for p in self.packs if p.id == pack_id), None)

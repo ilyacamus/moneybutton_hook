@@ -49,6 +49,24 @@ class Flow(StatesGroup):
     myreel = State()
 
 
+class PrivateAccessMiddleware(BaseMiddleware):
+    """Private mode: only the owners (ADMIN_IDS) get through; others are refused and never stored."""
+
+    async def __call__(self, handler, event, data):
+        settings: Settings = data["settings"]
+        user: User | None = data.get("event_from_user")
+        if user is None or settings.allowed(user.id):
+            return await handler(event, data)
+        log.info("Private mode: refused user %s", user.id)
+        if isinstance(event, Message):
+            await event.answer(texts.PRIVATE_CLOSED.format(user_id=user.id))
+        elif isinstance(event, CallbackQuery):
+            await event.answer(texts.PRIVATE_SHORT, show_alert=True)
+        elif isinstance(event, PreCheckoutQuery):
+            await event.answer(ok=False, error_message=texts.PRIVATE_SHORT)
+        return None
+
+
 class TouchUserMiddleware(BaseMiddleware):
     """Registers every user (with free credits) and refreshes last_seen."""
 
@@ -63,6 +81,9 @@ class TouchUserMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
+router.message.outer_middleware(PrivateAccessMiddleware())
+router.callback_query.outer_middleware(PrivateAccessMiddleware())
+router.pre_checkout_query.outer_middleware(PrivateAccessMiddleware())
 router.message.outer_middleware(TouchUserMiddleware())
 router.callback_query.outer_middleware(TouchUserMiddleware())
 
@@ -342,8 +363,15 @@ OPS = {
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, botdb: BotStorage, new_user: bool = False, **_: Any) -> None:
+async def cmd_start(message: Message, state: FSMContext, botdb: BotStorage, settings: Settings,
+                    new_user: bool = False, **_: Any) -> None:
     await state.clear()
+    if settings.private:
+        niche = botdb.memory.get_profile(workspace_of(message.from_user.id))["niche"]
+        status = niche_status(botdb.memory, niche) if niche else "Ниша не задана: /niche крипта и трейдинг"
+        await message.answer(texts.WELCOME_PRIVATE.format(niche=html.escape(niche or "—"), status=status),
+                             reply_markup=kb.main_menu())
+        return
     credits = botdb.credits(message.from_user.id)
     text = texts.WELCOME.format(credits=credits) if new_user else texts.WELCOME_BACK.format(credits=credits)
     await message.answer(text, reply_markup=kb.main_menu())
@@ -664,6 +692,9 @@ async def cmd_scout(message: Message, bot: Bot, **data: Any) -> None:
 @router.message(Command("balance", "buy"))
 @router.message(F.text == kb.BTN_BALANCE)
 async def cmd_balance(message: Message, botdb: BotStorage, settings: Settings, **_: Any) -> None:
+    if settings.private:
+        await message.answer(texts.PRIVATE_BALANCE)
+        return
     await message.answer(
         texts.BALANCE.format(credits=botdb.credits(message.from_user.id)), reply_markup=kb.packs(settings.packs)
     )
