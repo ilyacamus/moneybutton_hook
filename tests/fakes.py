@@ -95,6 +95,8 @@ class FakeMessages:
         self.client.calls.append(params)
         name = params["output_config"]["format"]["schema"]["title"]
         payload = self.client.overrides.get(name, CANNED[name])
+        if self.client.responder is not None:
+            payload = self.client.responder(name, params) or payload
         stop_reason = self.client.stop_reason
         if self.client.pause_first and len(self.client.calls) == 1:
             stop_reason, payload = "pause_turn", {}
@@ -111,4 +113,5 @@ class FakeClient:
         self.overrides: dict[str, Any] = {}
         self.stop_reason = "end_turn"
         self.pause_first = False
+        self.responder = None  # optional (schema name, params) -> payload
         self.beta = SimpleNamespace(messages=FakeMessages(self))

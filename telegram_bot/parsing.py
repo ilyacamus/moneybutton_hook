@@ -20,6 +20,8 @@ METRIC_ALIASES: dict[str, tuple[str, ...]] = {
     "shares": ("репостов", "репосты", "отправок", "отправки", "отправили", "shares", "sends"),
     "saves": ("сохранений", "сохранения", "сохранили", "сохр", "saves"),
     "follows": ("подписок", "подписки", "подписались", "подписчиков", "follows"),
+    # Not a stored metric: the author's usual views, for judging whether a reel went viral.
+    "typical_views": ("обычные просмотры", "обычно", "в среднем", "медиана", "typical", "usually"),
 }
 
 _NUMBER = r"(\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*(%|k|к|тыс\.?|m|м|млн)?"

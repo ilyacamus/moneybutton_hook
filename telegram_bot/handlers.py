@@ -19,8 +19,8 @@ from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 from aiogram.utils.chat_action import ChatActionSender
 
 from hookbot import render
-from hookbot.core import video
-from hookbot.core import learning
+from hookbot.core import audience, corpus, instagram, learning, literature, validation, video
+from hookbot.core.memory import METRIC_FIELDS
 from hookbot.engine import EngineError, HookEngine, HookInput
 
 from . import keyboards as kb
@@ -45,6 +45,8 @@ class Flow(StatesGroup):
     actions = State()
     result = State()
     niche = State()
+    ref = State()
+    myreel = State()
 
 
 class TouchUserMiddleware(BaseMiddleware):
@@ -93,6 +95,7 @@ class Ctx:
     storage: BotStorage
     settings: Settings
     limiter: asyncio.Semaphore
+    scout: Any = None
 
     @property
     def workspace(self) -> str:
@@ -148,6 +151,7 @@ def ctx_for(event: Message | CallbackQuery, bot: Bot, **data: Any) -> Ctx:
         storage=data["botdb"],
         settings=data["settings"],
         limiter=data["limiter"],
+        scout=data.get("scout"),
     )
 
 
@@ -195,6 +199,7 @@ async def op_actions(ctx: Ctx, hook: HookInput) -> None:
 
 
 async def op_result(ctx: Ctx, hook_id: int, metrics: dict[str, float]) -> None:
+    metrics = {k: v for k, v in metrics.items() if k in METRIC_FIELDS}
     hook = ctx.storage.memory.get_hook(hook_id, ctx.workspace)
     if hook is None:
         await ctx.send(f"Хук <code>#{hook_id}</code> не найден среди ваших.")
@@ -232,13 +237,20 @@ async def op_learn(ctx: Ctx, *, auto: bool = False) -> None:
     await ctx.send(head + render.render_playbook(playbook.model_dump()))
 
 
-async def op_video(ctx: Ctx, message: Message) -> None:
+async def _check_video(ctx: Ctx, message: Message) -> Any:
     media = message.video or message.video_note or message.document
     if media.file_size and media.file_size > MAX_VIDEO_BYTES:
         await ctx.send("Видео больше 20 МБ — Telegram не даёт ботам скачивать такие файлы. Обрежьте ролик до первых 5–10 секунд.")
-        return
+        return None
     if not video.ffmpeg_available():
         await ctx.send("Разбор видео временно недоступен. Пришлите хук текстом.")
+        return None
+    return media
+
+
+async def op_video(ctx: Ctx, message: Message) -> None:
+    media = await _check_video(ctx, message)
+    if media is None:
         return
     hook = parse_hook_message(message.caption) if message.caption else HookInput(text="")
     if not hook.text:
@@ -254,6 +266,66 @@ async def op_video(ctx: Ctx, message: Message) -> None:
             return
     hook.visual = hook.visual or "см. кадры видео"
     await op_score(ctx, hook, frames=probe.frames, facts=probe.facts_text(), source="video")
+
+
+async def _study_sent_video(ctx: Ctx, message: Message, op: str, **kwargs: Any) -> tuple[dict, dict] | None:
+    """Download a sent reel and study it with the scout (blind analysis)."""
+    media = await _check_video(ctx, message)
+    if media is None or ctx.scout is None:
+        return None
+    caption = message.caption or ""
+
+    async def work():
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "reel.mp4"
+            await ctx.bot.download(media.file_id, destination=path)
+            return await ctx.scout.study_file(str(path), workspace=ctx.workspace,
+                                              niche=ctx.storage.memory.get_profile(ctx.workspace)["niche"],
+                                              caption=caption, **kwargs)
+
+    return await ctx.paid(op, work)
+
+
+async def op_ref(ctx: Ctx, message: Message) -> None:
+    """A viral reel the user found: study it and compare with the user's own hooks."""
+    metrics = parse_metrics(message.caption or "")
+    result = await _study_sent_video(ctx, message, "video", views=metrics.get("views"),
+                                     typical_views=metrics.get("typical_views"))
+    if result is None:
+        return
+    reel, data = result
+    text = render.render_reel_analysis(data, reel)
+    cal = learning.calibrate(ctx.storage.memory, ctx.workspace)
+    own = [h["score"] for h in ctx.storage.memory.recent_hooks(ctx.workspace, limit=30)
+           if h["score"] is not None and h["source"] in learning.SCORED_SOURCES]
+    ref_score = cal.score(data["criteria"])
+    if own and ref_score is not None:
+        text += (f"\n\n📐 Балл этого ролика по вашей модели: {ref_score:.0f}; "
+                 f"средний балл ваших хуков: {sum(own) / len(own):.0f} (n={len(own)}).")
+    text += "\n\nРолик добавлен в корпус эталонов: он участвует в сравнении залетевших и обычных роликов."
+    await ctx.send(text)
+
+
+async def op_myreel(ctx: Ctx, message: Message) -> None:
+    """One of the user's own published reels with its real skip rate: training data for the audit."""
+    metrics = parse_metrics(message.caption or "")
+    skip = metrics.get("skip_rate")
+    if skip is None and metrics.get("hold_3s") is not None:
+        skip = 100 - metrics["hold_3s"]
+    if skip is None:
+        await ctx.send("Нужен skip rate из статистики ролика. Пришлите видео ещё раз с подписью, например: "
+                       "<code>skip 38% просмотры 12к</code>")
+        return
+    result = await _study_sent_video(ctx, message, "score", own=True, skip_rate=skip, views=metrics.get("views"))
+    if result is None:
+        return
+    reel, data = result
+    report = audience.latest_report(ctx.storage.memory, ctx.workspace) or {}
+    n = report.get("n_studied", 0)
+    text = render.render_reel_analysis(data, None) + f"\n\n✅ Ролик добавлен в аудит канала: {n} из {audience.MIN_REELS} нужных для статистики."
+    if n >= audience.MIN_REELS:
+        text += "\n\n" + render.render_audience(report)
+    await ctx.send(text)
 
 
 OPS = {
@@ -412,6 +484,119 @@ async def cb_delete(callback: CallbackQuery, botdb: BotStorage, **_: Any) -> Non
     await callback.answer()
 
 
+# --------------------------------------------------------------------------- #
+# Your channel first: audit of the creator's own audience
+# --------------------------------------------------------------------------- #
+
+
+@router.message(Command("audit"))
+async def cmd_audit(message: Message, bot: Bot, **data: Any) -> None:
+    ctx = ctx_for(message, bot, **data)
+    scout = ctx.scout
+    if not (ctx.unlimited and scout is not None and scout.ig is not None):
+        await message.answer(texts.AUDIT_HOWTO.format(n=audience.MIN_REELS))
+        return
+    await message.answer("🔎 Запускаю аудит вашего канала: забираю ролики и статистику из Instagram, "
+                         "разбираю хук каждого ролика. Это займёт несколько минут — пришлю отчёт.")
+
+    async def progress(text: str) -> None:
+        await ctx.send(text)
+
+    async def run() -> None:
+        try:
+            report = await scout.audit(ctx.workspace, progress=progress)
+        except (instagram.InstagramError, EngineError) as exc:
+            await ctx.send(f"😕 Аудит не удался: {html.escape(str(exc))}")
+            return
+        await ctx.send(render.render_audience(report))
+
+    asyncio.create_task(run())
+
+
+@router.message(Command("myreel"))
+async def cmd_myreel(message: Message, state: FSMContext, **_: Any) -> None:
+    await state.set_state(Flow.myreel)
+    await message.answer(texts.ASK_MYREEL)
+
+
+@router.message(Command("audience"))
+async def cmd_audience(message: Message, botdb: BotStorage, **_: Any) -> None:
+    report = audience.latest_report(botdb.memory, workspace_of(message.from_user.id))
+    for chunk in split_message(render.render_audience(report)):
+        await message.answer(chunk)
+
+
+# --------------------------------------------------------------------------- #
+# Science: the viral corpus, validation, fresh research
+# --------------------------------------------------------------------------- #
+
+
+@router.message(Command("ref"))
+async def cmd_ref(message: Message, state: FSMContext, **_: Any) -> None:
+    await state.set_state(Flow.ref)
+    await message.answer(texts.ASK_REF)
+
+
+@router.message(Command("science", "trends"))
+async def cmd_science(message: Message, botdb: BotStorage, **_: Any) -> None:
+    memory = botdb.memory
+    niche = corpus.match_niche(memory, memory.get_profile(workspace_of(message.from_user.id))["niche"])
+    for chunk in split_message(render.render_science(corpus.latest_report(memory, niche))):
+        await message.answer(chunk)
+
+
+@router.message(Command("validate"))
+async def cmd_validate(message: Message, botdb: BotStorage, **_: Any) -> None:
+    await message.answer(render.render_validation(validation.report(botdb.memory, workspace_of(message.from_user.id))))
+
+
+@router.message(Command("watch", "unwatch"))
+async def cmd_watch(message: Message, command: CommandObject, botdb: BotStorage, **_: Any) -> None:
+    ws = workspace_of(message.from_user.id)
+    c = corpus.Corpus(botdb.memory)
+    username = (command.args or "").strip().lstrip("@")
+    if username:
+        if command.command == "watch":
+            c.watch(ws, username, niche=botdb.memory.get_profile(ws)["niche"])
+        else:
+            c.unwatch(ws, username)
+    watched = [f"@{w['username']}" for w in c.watchlist(ws)]
+    await message.answer(
+        ("Слежу за: " + ", ".join(watched) if watched else "Пока ни за кем не слежу.")
+        + "\nДобавить аккаунт (бизнес или автор): <code>/watch username</code>. "
+        "Робот будет находить у них залетевшие ролики и сравнивать с их обычными."
+    )
+
+
+@router.message(Command("papers", "approve"))
+async def cmd_papers(message: Message, command: CommandObject, botdb: BotStorage, settings: Settings, **_: Any) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        return
+    if command.command == "approve" and command.args:
+        chosen = literature.approve(botdb.memory, [int(x) for x in command.args.replace(",", " ").split() if x.isdigit()])
+        await message.answer(f"Одобрено исследований: {len(chosen)}. Они попадут в промпты оценщика.")
+    for chunk in split_message(render.render_papers(literature.pending(botdb.memory))):
+        await message.answer(chunk, disable_web_page_preview=True)
+
+
+@router.message(Command("scout"))
+async def cmd_scout(message: Message, bot: Bot, **data: Any) -> None:
+    ctx = ctx_for(message, bot, **data)
+    if not ctx.unlimited or ctx.scout is None:
+        return
+    await message.answer("🛰 Запускаю цикл разведки…")
+
+    async def run() -> None:
+        summary = await ctx.scout.run_once()
+        text = (f"Собрано: {summary.collected}, размечено: {summary.labeled}, изучено: {summary.studied}, "
+                f"ошибок: {summary.failed}, своих результатов: {summary.own_results}, отчёты: {', '.join(summary.reports) or '—'}")
+        if summary.errors:
+            text += "\n" + "\n".join(html.escape(e) for e in summary.errors[:5])
+        await ctx.send(text)
+
+    asyncio.create_task(run())
+
+
 @router.message(Command("balance", "buy"))
 @router.message(F.text == kb.BTN_BALANCE)
 async def cmd_balance(message: Message, botdb: BotStorage, settings: Settings, **_: Any) -> None:
@@ -568,8 +753,15 @@ async def successful_payment(message: Message, botdb: BotStorage, settings: Sett
 
 @router.message(F.video | F.video_note | (F.document.mime_type.startswith("video/")))
 async def on_video(message: Message, state: FSMContext, bot: Bot, **data: Any) -> None:
+    current = await state.get_state()
     await state.clear()
-    await op_video(ctx_for(message, bot, **data), message)
+    ctx = ctx_for(message, bot, **data)
+    if current == Flow.ref.state:
+        await op_ref(ctx, message)
+    elif current == Flow.myreel.state:
+        await op_myreel(ctx, message)
+    else:
+        await op_video(ctx, message)
 
 
 @router.message(Flow.result, F.text)

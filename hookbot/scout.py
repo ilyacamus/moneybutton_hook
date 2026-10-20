@@ -20,6 +20,7 @@ One cycle (every ``interval_minutes``):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import tempfile
@@ -28,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .core import corpus, features, instagram, knowledge, learning, literature, video
+from .core import audience, corpus, features, instagram, knowledge, learning, literature, video
 from .core.corpus import Corpus
 from .core.memory import MemoryStore, now_iso
 from .core.video import Frame
@@ -41,7 +42,7 @@ log = logging.getLogger(__name__)
 class ScoutConfig:
     media_per_account: int = 25
     study_per_cycle: int = 10
-    daily_budget: int = 150
+    daily_budget: int = 60
     interval_minutes: float = 60
     literature_every_days: float = 7
     own_workspace: str | None = None  # workspace whose Instagram account the token belongs to
@@ -162,6 +163,39 @@ class Scout:
         self.corpus.save_analysis(reel["id"], data, feats)
         return data
 
+    async def study_file(
+        self,
+        path: str,
+        *,
+        workspace: str = "",
+        niche: str = "",
+        views: int | None = None,
+        typical_views: float | None = None,
+        caption: str = "",
+        url: str = "",
+        own: bool = False,
+        skip_rate: float | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Study a reel sent in as a file: a competitor's viral reel, or (``own=True``)
+        one of the creator's own reels with its real skip rate."""
+        digest = hashlib.sha1(Path(path).read_bytes()).hexdigest()[:16]
+        reel_id = self.corpus.upsert(corpus.ReelRecord(
+            source="own_file" if own else "manual", external_id=url or digest, url=url,
+            creator=f"own:{workspace}" if own else f"manual:{workspace}:{digest}",
+            niche=niche, caption=caption, views=views, baseline_views=typical_views, local_path=path,
+            workspace=workspace, skip_rate=skip_rate,
+        ))
+        if views and typical_views:
+            score = round(views / typical_views, 3)
+            self.corpus.set_label(reel_id, corpus.label_for(score), score)
+        reel = self.corpus.get(reel_id)
+        data = reel["analysis"] if reel["status"] == "studied" else await self.study_one(reel)
+        if own:
+            self.corpus.label_all()
+            self.sync_own_results()
+            audience.save_report(self.store, audience.audience_report(self.store, workspace))
+        return self.corpus.get(reel_id), data
+
     async def study(self, summary: CycleSummary) -> None:
         left = min(self.config.study_per_cycle, self.config.daily_budget - self.studied_today())
         if left <= 0:
@@ -179,7 +213,9 @@ class Scout:
     def sync_own_results(self) -> int:
         """Own studied reels with a skip rate → hooks with results in the account's memory."""
         rows = self.store.conn.execute(
-            "SELECT id FROM reels WHERE source = 'instagram_own' AND status = 'studied' AND skip_rate IS NOT NULL"
+            f"SELECT id FROM reels WHERE source IN ({', '.join('?' * len(audience.OWN_SOURCES))}) "
+            "AND status = 'studied' AND skip_rate IS NOT NULL",
+            audience.OWN_SOURCES,
         ).fetchall()
         n = 0
         for (reel_id,) in rows:
@@ -200,6 +236,54 @@ class Scout:
             self.corpus.save_analysis(reel_id, data, reel["features"] or {})
             n += 1
         return n
+
+    # audit of the creator's own channel -------------------------------------
+
+    async def audit(
+        self,
+        workspace: str,
+        *,
+        records: list[corpus.ReelRecord] | None = None,
+        limit: int = 100,
+        max_study: int = 100,
+        progress: Callable[[str], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        """Study every own reel, turn it into training data and report what holds this audience.
+
+        ``records`` come from an insights export; without them the connected
+        Instagram account is read through the API.
+        """
+        niche = self.store.get_profile(workspace)["niche"]
+        if records is None:
+            if self.ig is None:
+                raise instagram.InstagramError("Instagram не подключён: задайте IG_ACCESS_TOKEN и IG_USER_ID "
+                                               "или загрузите выгрузку статистики")
+            records = await asyncio.to_thread(instagram.own_records, self.ig, workspace=workspace, niche=niche, limit=limit)
+        for rec in records:
+            rec.workspace = workspace
+            self.corpus.upsert(rec)
+        self.corpus.label_all()
+        todo = [r for r in audience.own_reels(self.store, workspace) if r["status"] in ("new", "failed")][:max_study]
+        done = failed = 0
+        for n, reel in enumerate(todo, 1):
+            try:
+                await self.study_one(reel)
+                done += 1
+            except (EngineError, video.VideoError, instagram.InstagramError) as exc:
+                self.corpus.mark_failed(reel["id"], str(exc))
+                failed += 1
+            if progress and n % 5 == 0:
+                await progress(f"Разобрано {n} из {len(todo)}…")
+        synced = self.sync_own_results()
+        report = audience.audience_report(self.store, workspace)
+        report.update(collected=len(records), studied_now=done, failed_now=failed, synced=synced)
+        audience.save_report(self.store, report)
+        if len(self.store.training_rows(workspace)) >= 3:
+            try:
+                await self.engine.reflect(workspace)
+            except EngineError as exc:
+                log.warning("Playbook update failed: %s", exc)
+        return report
 
     # 5. learn ---------------------------------------------------------------
 

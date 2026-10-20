@@ -126,6 +126,8 @@ def render_evaluation(report: EvaluationReport, f: type[Plain] = HTML) -> str:
         lines += ["", f.b("Что мешает")] + [f"❌ {f.esc(s)}" for s in ev.weaknesses]
     if report.video_facts:
         lines += ["", f.b("Факты о видео"), f.esc(report.video_facts["text"])]
+    if report.benchmark:
+        lines += ["", *render_benchmark(report.benchmark, f)]
     if ev.improved:
         lines += ["", f.b("Улучшенные версии")]
         ids = report.improved_ids or [None] * len(ev.improved)
@@ -253,3 +255,188 @@ def render_playbook(playbook: dict[str, Any] | None, f: type[Plain] = HTML) -> s
         lines.append(f.b("🧪 Что протестировать"))
         lines += [f"• {f.esc(e)}" for e in playbook["experiments"]]
     return "\n".join(lines).strip()
+
+
+def render_benchmark(bench: dict[str, Any], f: type[Plain] = HTML) -> list[str]:
+    where = "все ниши" if bench["niche"] == "*" else f"ниша «{bench['niche']}»"
+    lines = [f.b(f"📊 Сравнение с залетевшими ({where}: {bench['n_viral']} залетевших, {bench['n_control']} обычных)")]
+    score = bench.get("score")
+    if score:
+        control = f", обычные — {score['control_median']:.0f}" if score.get("control_median") is not None else ""
+        lines.append(f"Балл {score['value']:.0f}: выше, чем у {score['pct_of_viral']}% залетевших "
+                     f"(их медиана {score['viral_median']:.0f}{control})")
+    for item in bench["items"]:
+        if item["kind"] == "binary":
+            mark = "✅" if item["value"] else "▫️"
+            control = f", у обычных {item['control_share']}%" if item.get("control_share") is not None else ""
+            lines.append(f"{mark} {f.esc(item['label'])}: у залетевших {item['viral_share']}%{control}")
+        else:
+            lines.append(f"• {f.esc(item['label'])}: у вас {item['value']:g}, медиана залетевших "
+                         f"{item['viral_median']:g}" + (f", обычных {item['control_median']:g}" if item.get("control_median") is not None else ""))
+    return lines
+
+
+STATUS_ICONS = {
+    "доказано: наука + данные": "🟢",
+    "подтверждено данными (новое знание)": "🔵",
+    "наука за, на данных пока не видно": "🟡",
+    "данные против науки — проверить, возможен сдвиг тренда": "🟠",
+    "данные против практики": "🟠",
+    "гипотеза": "⚪",
+    "нет данных": "▫️",
+}
+
+
+def render_science(report: dict[str, Any] | None, f: type[Plain] = HTML, *, limit: int = 12) -> str:
+    """The corpus report: what actually separates viral reels from the same creators' typical ones."""
+    if not report:
+        return ("Корпус залетевших роликов пока пуст. Робот начнёт учиться, когда появятся отслеживаемые аккаунты "
+                "(/watch) или присланные эталоны (/ref).")
+    where = "все ниши" if report["niche"] == "*" else f"ниша «{report['niche']}»"
+    v = report["validity"]
+    lines = [f.b(f"🔬 Что реально работает — {where}"),
+             f.i("Сравниваем залетевшие ролики (≥3× медианы автора) с обычными роликами тех же авторов; "
+                 "оценка вслепую; поправка на множественные проверки (q-value).")]
+    lines.append(f"Изучено: {v['n_viral']} залетевших, {v['n_control']} обычных.")
+    if v.get("auc") is not None:
+        lo, hi = v["auc_ci"]
+        lines.append(f"Рубрика отличает залетевшие от обычных: AUC {v['auc']:.2f} (95% ДИ {lo:.2f}–{hi:.2f}; 0.5 = угадывание)")
+    lines += ["", f.b("Наука + данные")]
+    shown = 0
+    for item in report.get("synthesis", []):
+        if item["status"] in ("нет данных",) or shown >= limit:
+            continue
+        stat = f" — разница {item['diff']:+g}, q={item['q']}" if item.get("q") is not None else ""
+        lines.append(f"{STATUS_ICONS.get(item['status'], '•')} {f.esc(item['name'])} "
+                     f"[литература {item['literature_level']}]: {f.esc(item['status'])}{stat}")
+        shown += 1
+    trends = report.get("trends") or {}
+    if trends.get("rising") or trends.get("fading") or trends.get("shifts"):
+        lines += ["", f.b(f"📈 Тренды: последние {trends['window_days']:.0f} дней против раньше")]
+        for item in trends.get("rising", [])[:5]:
+            lines.append(f"⬆️ {f.esc(item['label'])}: {item['share_before']}% → {item['share_now']}% залетевших")
+        for item in trends.get("fading", [])[:5]:
+            lines.append(f"⬇️ {f.esc(item['label'])}: {item['share_before']}% → {item['share_now']}% залетевших")
+        for item in trends.get("shifts", [])[:5]:
+            lines.append(f"🔄 {f.esc(item['label'])}: эффект {item['delta_before']:+} → {item['delta_now']:+}")
+    w = report.get("weights")
+    if w:
+        names = knowledge.names("criterion")
+        top = sorted(w["weights"].items(), key=lambda kv: -kv[1])[:3]
+        lines += ["", f.i(f"Веса рубрики по корпусу (n={w['n']}, свежие ролики весят больше): "
+                          + ", ".join(f"{names[c]} {v * 100:.0f}%" for c, v in top))]
+    return "\n".join(lines)
+
+
+def render_validation(report: dict[str, Any], f: type[Plain] = HTML) -> str:
+    lines = [f.b("🧪 Насколько можно доверять оценщику")]
+    fa = report.get("forecast_account") or report.get("forecast_all") or {}
+    if fa.get("mae") is not None:
+        skill = fa["skill"]
+        verdict = "лучше наивного прогноза" if skill and skill > 0 else "пока не лучше наивного прогноза"
+        rho = f", ранговая корреляция {fa['spearman']:+.2f}" if fa.get("spearman") is not None else ""
+        lines.append(f"Прогноз удержания 3 с: ошибка ±{fa['mae']} п.п. против ±{fa['baseline_mae']} у среднего "
+                     f"по аккаунту (n={fa['n']}) — {verdict}{rho}")
+    else:
+        lines.append("Прогноз удержания: мало проверенных прогнозов (нужно ≥3 ролика, оценённых до публикации).")
+    c = report.get("corpus")
+    if c and c.get("auc") is not None:
+        lines.append(f"Различение залетевших и обычных роликов: AUC {c['auc']:.2f} (95% ДИ {c['auc_ci'][0]:.2f}–{c['auc_ci'][1]:.2f})")
+    else:
+        lines.append("Различение залетевших: корпус ещё мал.")
+    r = report.get("reliability")
+    if r and r.get("score_icc") is not None:
+        lines.append(f"Надёжность оценок (повторная оценка {r['n_hooks']} хуков × {r['raters']}): "
+                     f"ICC {r['score_icc']:.2f} — {r['score_band']}")
+    else:
+        lines.append("Надёжность оценок: проверка не запускалась.")
+    return "\n".join(lines)
+
+
+def render_papers(papers: list[dict[str, Any]], f: type[Plain] = HTML, *, numbered: bool = True) -> str:
+    if not papers:
+        return "Новых исследований, ждущих проверки, нет."
+    lines = []
+    for n, p in enumerate(papers, 1):
+        head = f"{n}. " if numbered else "• "
+        review = "" if p.get("peer_reviewed") else " (препринт)"
+        lines.append(f"{head}{f.b(p['title'])} — {f.esc(p['authors'])}, {p['year']}, {f.esc(p['venue'])}{review} "
+                     f"[{p['evidence_level']}]\n   {f.esc(p['finding'])}\n   {f.esc(p['link'])}")
+    return "\n".join(lines)
+
+
+def render_reel_analysis(data: dict[str, Any], reel: dict[str, Any] | None = None, f: type[Plain] = HTML) -> str:
+    names = knowledge.names("criterion")
+    lines = [f.b("🎬 Разбор ролика (вслепую, без учёта просмотров)")]
+    if reel and reel.get("outlier_score"):
+        lines.append(f"Просмотры: в {reel['outlier_score']:.1f}× больше обычного у автора — {reel['label']}")
+    if data.get("spoken_hook"):
+        lines.append(f"🗣 {f.esc(data['spoken_hook'])}")
+    if data.get("on_screen_text"):
+        lines.append(f"📝 {f.esc(data['on_screen_text'])}")
+    lines.append(f"🎞 {f.esc(data.get('visual', ''))}")
+    flags = [label for key, label in (("face_first_second", "лицо"), ("text_first_second", "текст"),
+                                      ("motion_first_second", "движение")) if data.get(key)]
+    lines.append("В первую секунду: " + (", ".join(flags) if flags else "ни лица, ни текста, ни движения"))
+    crit = data.get("criteria") or {}
+    if crit:
+        top = sorted(crit.items(), key=lambda kv: -kv[1])[:3]
+        lines.append("Сильнее всего: " + ", ".join(f"{names[c]} {v}" for c, v in top))
+    if data.get("trigger_ids"):
+        lines.append("🧠 " + f.esc(_ids(list(data["trigger_ids"]), "trigger")))
+    if data.get("hypothesis"):
+        lines.append(f"💡 {f.esc(data['hypothesis'])}")
+    return "\n".join(lines)
+
+
+def render_audience(report: dict[str, Any] | None, f: type[Plain] = HTML) -> str:
+    """The channel audit: what holds this creator's own audience."""
+    if not report:
+        return "Аудита канала ещё не было. Запустите /audit или пришлите свои ролики через /myreel."
+    lines = [f.b("👥 Аудит вашего канала: что удерживает вашу аудиторию")]
+    lines.append(f"Роликов: {report['n_reels']}, разобрано: {report['n_studied']}, со skip rate: {report['n_with_skip_rate']}")
+    if report.get("median_skip_rate") is not None:
+        lines.append(f"Медианный skip rate: {report['median_skip_rate']}% (удержание 3 с ≈ {100 - report['median_skip_rate']:.0f}%)")
+    if report.get("median_views"):
+        lines.append(f"Медиана просмотров: {report['median_views']:,.0f}".replace(",", " ")
+                     + f"; прорывных роликов (≥3× медианы): {report['breakouts']}")
+    if report["n_studied"] < report["min_reels"]:
+        lines.append(f.i(f"Для статистики нужно хотя бы {report['min_reels']} разобранных роликов со skip rate. "
+                         "Выводы ниже — предварительные."))
+
+    def effects(title: str, items: list[dict[str, Any]], kind: str) -> list[str]:
+        out = []
+        for e in items:
+            if e["verdict"] == "не подтверждено":
+                continue
+            if kind == "hold":
+                extra = (f" ({e['hold_with']}% vs {e['hold_without']}%)" if "hold_with" in e else "")
+                out.append(f"{'⬆️' if e['rho'] > 0 else '⬇️'} {f.esc(e['label'])}: ρ={e['rho']:+.2f}{extra}, q={e['q']} — {e['verdict']}")
+            else:
+                out.append(f"{'⬆️' if e['diff'] > 0 else '⬇️'} {f.esc(e['label'])}: прорывные {e['viral']} vs обычные "
+                           f"{e['control']}, q={e['q']} — {e['verdict']}")
+        return ([f.b(title)] + out[:8]) if out else []
+
+    hold = effects("Что связано с удержанием первых 3 секунд", report["hold_effects"], "hold")
+    reach = effects("Что отличает ваши прорывные ролики", report["reach_effects"], "reach")
+    if hold or reach:
+        lines += ["", *hold, *([""] if hold and reach else []), *reach]
+    else:
+        lines += ["", f.i("Статистически значимых закономерностей пока нет — нужно больше роликов.")]
+    agreed = [s for s in report.get("hold_synthesis", []) + report.get("reach_synthesis", [])
+              if s["status"] not in ("нет данных", "гипотеза")]
+    if agreed:
+        lines += ["", f.b("Ваша аудитория и наука")]
+        seen = set()
+        for s in agreed:
+            if s["id"] in seen:
+                continue
+            seen.add(s["id"])
+            lines.append(f"{STATUS_ICONS.get(s['status'], '•')} {f.esc(s['name'])} [литература {s['literature_level']}]: {f.esc(s['status'])}")
+    if report.get("best_hold"):
+        lines += ["", f.b("Лучшие хуки по удержанию")]
+        lines += [f"{r['skip_rate']:.0f}% skip — «{f.esc((r['hook'] or '')[:90])}»" for r in report["best_hold"]]
+    if report.get("worst_hold"):
+        lines += ["", f.b("Хуки, которые пролистывают")]
+        lines += [f"{r['skip_rate']:.0f}% skip — «{f.esc((r['hook'] or '')[:90])}»" for r in report["worst_hold"]]
+    return "\n".join(lines)

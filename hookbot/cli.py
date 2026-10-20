@@ -12,10 +12,10 @@ import sys
 from pathlib import Path
 
 from . import render
-from .core import video
-from .core import learning
+from .core import audience, corpus, instagram, learning, literature, validation, video
 from .core.memory import METRIC_FIELDS, MemoryStore
 from .engine import EngineError, HookEngine, HookInput
+from .scout import Scout, ScoutConfig
 
 DEFAULT_DB = os.getenv("HOOKBOT_DB", "data/hookbot.db")
 
@@ -57,14 +57,82 @@ async def run(args: argparse.Namespace) -> int:
         insight = store.latest_insight(ws)
         print(render.render_playbook(insight["content"] if insight else None, f))
         return 0
+    if args.command == "science":
+        niche = args.niche or corpus.match_niche(store, store.get_profile(ws)["niche"])
+        print(render.render_science(corpus.latest_report(store, niche), f))
+        return 0
+    if args.command == "audience":
+        print(render.render_audience(audience.latest_report(store, ws), f))
+        return 0
+    if args.command == "validate":
+        print(render.render_validation(validation.report(store, ws), f))
+        return 0
+    if args.command == "papers":
+        if args.approve:
+            chosen = literature.approve(store, [int(x) for x in args.approve.split(",")])
+            print(f"Одобрено: {len(chosen)}")
+        print(render.render_papers(literature.pending(store), f))
+        return 0
+    if args.command == "scout" and args.action in ("watch", "unwatch", "list", "import"):
+        c = corpus.Corpus(store)
+        if args.action == "watch":
+            c.watch(ws, args.target, niche=args.niche or store.get_profile(ws)["niche"])
+        elif args.action == "unwatch":
+            c.unwatch(ws, args.target)
+        elif args.action == "import":
+            records = instagram.import_jsonl(args.target, default_niche=args.niche or "")
+            for rec in records:
+                c.upsert(rec)
+            print(f"Импортировано: {len(records)}, размечено: {c.label_all()}")
+        for entry in c.watchlist():
+            print(f"@{entry['username']}  ниша: {entry['niche'] or '—'}  ({entry['workspace']})")
+        print(c.counts())
+        return 0
 
     engine = HookEngine(store)
+    if args.command == "scout":
+        scout = Scout(store, engine, ig=instagram.InstagramGraph.from_env(), config=ScoutConfig.from_env())
+        if args.action == "once":
+            summary = await scout.run_once()
+            print(summary)
+            for niche in summary.reports:
+                print("\n" + render.render_science(corpus.latest_report(store, niche), f))
+        else:
+            await scout.run_forever()
+        return 0
+    if args.command == "audit":
+        records = None
+        if args.csv:
+            records = instagram.import_insights_csv(args.csv, workspace=ws, niche=store.get_profile(ws)["niche"],
+                                                    videos_dir=args.videos)
+            missing = sum(1 for r in records if not r.local_path)
+            print(f"Из выгрузки: {len(records)} роликов, без видеофайла: {missing}")
+        scout = Scout(store, engine, ig=instagram.InstagramGraph.from_env(), config=ScoutConfig.from_env())
+
+        async def progress(text: str) -> None:
+            print(text)
+
+        report = await scout.audit(ws, records=records, limit=args.limit, max_study=args.max_study, progress=progress)
+        print(render.render_audience(report, f))
+        return 0
+    if args.command == "ref":
+        scout = Scout(store, engine, config=ScoutConfig.from_env())
+        reel, data = await scout.study_file(
+            args.video, workspace=ws, niche=args.niche or store.get_profile(ws)["niche"], views=args.views,
+            typical_views=args.typical, caption=_read(args.caption),
+        )
+        print(render.render_reel_analysis(data, reel, f))
+        return 0
+    if args.command == "reliability":
+        ids = [h["id"] for h in store.recent_hooks(ws, limit=args.sample) if h["source"] in learning.SCORED_SOURCES]
+        print(render.render_validation({"reliability": await engine.reliability_study(ws, ids, raters=args.raters)}, f))
+        return 0
     if args.command == "score":
-        frames, facts = [], ""
+        frames, facts, facts_text = [], None, ""
         if args.video:
             probe = await asyncio.to_thread(video.probe, args.video)
-            frames, facts = probe.frames, probe.facts_text()
-        report = await engine.evaluate(ws, _hook(args), frames=frames, video_facts=facts,
+            frames, facts, facts_text = probe.frames, probe.facts(), probe.facts_text()
+        report = await engine.evaluate(ws, _hook(args), frames=frames, video_facts=facts_text, facts=facts,
                                        source="video" if args.video else "evaluated")
         print(render.render_evaluation(report, f))
     elif args.command == "generate":
@@ -133,6 +201,34 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("stats", help="что модель выучила")
     sub.add_parser("playbook", help="показать текущий плейбук")
 
+    sp = sub.add_parser("audit", help="аудит вашего канала: что удерживает именно вашу аудиторию")
+    sp.add_argument("--csv", help="выгрузка статистики Reels (CSV из Meta Business Suite / панели профессионала)")
+    sp.add_argument("--videos", help="папка с вашими роликами (имя файла содержит id публикации или код из ссылки)")
+    sp.add_argument("--limit", type=int, default=100, help="сколько последних роликов взять через API")
+    sp.add_argument("--max-study", type=int, default=100, help="сколько роликов разобрать за запуск (каждый — запрос к Claude)")
+    sub.add_parser("audience", help="последний аудит канала")
+
+    sp = sub.add_parser("scout", help="робот-разведчик: собирает Reels, находит залетевшие, учится")
+    sp.add_argument("action", choices=("once", "run", "watch", "unwatch", "list", "import"))
+    sp.add_argument("target", nargs="?", help="аккаунт для watch/unwatch или файл JSONL для import")
+    sp.add_argument("--niche")
+
+    sp = sub.add_parser("ref", help="разобрать залетевший ролик (видеофайл) и добавить в корпус")
+    sp.add_argument("video")
+    sp.add_argument("--views", type=int, help="просмотры этого ролика")
+    sp.add_argument("--typical", type=float, help="обычные просмотры автора")
+    sp.add_argument("--caption", help="подпись или файл с ней")
+    sp.add_argument("--niche")
+
+    sp = sub.add_parser("science", help="что реально работает: корпус залетевших + литература")
+    sp.add_argument("--niche")
+    sub.add_parser("validate", help="насколько можно доверять оценщику")
+    sp = sub.add_parser("reliability", help="повторная оценка хуков: надёжность (ICC)")
+    sp.add_argument("--sample", type=int, default=10)
+    sp.add_argument("--raters", type=int, default=3)
+    sp = sub.add_parser("papers", help="свежие исследования, найденные роботом")
+    sp.add_argument("--approve", help="номера через запятую")
+
     sp = sub.add_parser("profile", help="ниша, аудитория, язык")
     sp.add_argument("--niche")
     sp.add_argument("--audience")
@@ -145,6 +241,6 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return asyncio.run(run(args))
-    except (EngineError, video.VideoError, LookupError, ValueError) as exc:
+    except (EngineError, video.VideoError, instagram.InstagramError, LookupError, ValueError) as exc:
         print(f"Ошибка: {exc}", file=sys.stderr)
         return 1

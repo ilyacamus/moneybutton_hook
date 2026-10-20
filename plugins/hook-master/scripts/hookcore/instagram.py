@@ -13,8 +13,10 @@ disabled by the owner; callers then fall back to ``thumbnail_url``.
 
 from __future__ import annotations
 
+import csv
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -81,7 +83,17 @@ class InstagramGraph:
         return self._get(self.user_id, {"fields": "username,followers_count,media_count"})
 
     def own_media(self, limit: int = 25) -> list[dict[str, Any]]:
-        return self._get(f"{self.user_id}/media", {"fields": MEDIA_FIELDS, "limit": limit}).get("data", [])
+        """Up to ``limit`` most recent own media, following pagination cursors."""
+        media: list[dict[str, Any]] = []
+        params: dict[str, Any] = {"fields": MEDIA_FIELDS, "limit": min(limit, 50)}
+        while len(media) < limit:
+            page = self._get(f"{self.user_id}/media", params)
+            media += page.get("data", [])
+            after = ((page.get("paging") or {}).get("cursors") or {}).get("after")
+            if not after or not page.get("data") or not (page.get("paging") or {}).get("next"):
+                break
+            params = {**params, "after": after}
+        return media[:limit]
 
     def media_insights(self, media_id: str) -> dict[str, float]:
         """Lifetime insights of one own reel; unsupported metrics are skipped."""
@@ -183,3 +195,94 @@ def import_jsonl(path: str | Path, *, default_niche: str = "", default_source: s
                 data["external_id"] = data.get("url") or f"{Path(path).name}:{n}"
             records.append(ReelRecord(**data))
     return records
+
+
+# --------------------------------------------------------------------------- #
+# Own channel from an insights export (Meta Business Suite / Professional dashboard)
+# --------------------------------------------------------------------------- #
+
+CSV_COLUMNS: dict[str, tuple[str, ...]] = {
+    "external_id": ("post id", "media id", "id", "идентификатор публикации", "id публикации"),
+    "url": ("permalink", "link", "url", "постоянная ссылка", "ссылка"),
+    "caption": ("description", "caption", "title", "описание", "подпись", "текст"),
+    "published_at": ("publish time", "published", "date", "время публикации", "дата публикации", "дата"),
+    "views": ("views", "plays", "просмотры", "воспроизведения"),
+    "likes": ("likes", "отметки «нравится»", "отметки \"нравится\"", "лайки"),
+    "comments": ("comments", "комментарии"),
+    "shares": ("shares", "репосты", "поделились"),
+    "saves": ("saves", "сохранения"),
+    "skip_rate": ("skip rate", "reels skip rate", "процент пропусков", "пропуски", "skip"),
+    "hold_3s": ("hold 3s", "3-second hold", "удержание 3 с", "удержание 3с"),
+    "file": ("file", "video", "файл", "видео"),
+}
+_SHORTCODE = re.compile(r"/(?:reel|reels|p)/([A-Za-z0-9_-]+)")
+
+
+def _num(value: str | None) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower().replace("\u00a0", "").replace(" ", "").replace("%", "")
+    if not text or text in ("-", "—", "n/a"):
+        return None
+    mult = 1.0
+    if text[-1] in "kк":
+        mult, text = 1_000.0, text[:-1]
+    elif text[-1] in "mм":
+        mult, text = 1_000_000.0, text[:-1]
+    try:
+        return float(text.replace(",", ".")) * mult
+    except ValueError:
+        return None
+
+
+def _match_video(row: dict[str, str], videos: list[Path]) -> str:
+    keys = [row.get("file") or "", row.get("external_id") or ""]
+    m = _SHORTCODE.search(row.get("url") or "")
+    if m:
+        keys.append(m.group(1))
+    for key in filter(None, keys):
+        for path in videos:
+            if key == path.name or key in path.stem:
+                return str(path)
+    return ""
+
+
+def import_insights_csv(path: str | Path, *, workspace: str, niche: str = "",
+                        videos_dir: str | Path | None = None) -> list[ReelRecord]:
+    """Own reels from an exported insights table (+ a folder with the videos).
+
+    Column names are matched loosely in English and Russian. Videos are
+    matched by a ``file`` column, the post id or the reel shortcode in the
+    file name.
+    """
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        header = f.readline()
+        f.seek(0)
+        # The header decides: captions often contain commas, so sniffing whole rows misleads.
+        delimiter = max((";", "\t", ","), key=header.count)
+        table = list(csv.DictReader(f, delimiter=delimiter))
+    videos = sorted(p for p in Path(videos_dir).iterdir() if p.is_file()) if videos_dir else []
+    records = []
+    for n, raw in enumerate(table, 1):
+        lowered = {(k or "").strip().lower(): (v or "").strip() for k, v in raw.items()}
+        row = {field: next((lowered[a] for a in aliases if lowered.get(a)), "") for field, aliases in CSV_COLUMNS.items()}
+        skip = _num(row["skip_rate"])
+        hold = _num(row["hold_3s"])
+        if skip is not None and skip <= 1:
+            skip *= 100
+        if skip is None and hold is not None:
+            skip = 100 - (hold * 100 if hold <= 1 else hold)
+        views = _num(row["views"])
+        records.append(ReelRecord(
+            source="own_csv", external_id=row["external_id"] or row["url"] or f"{Path(path).name}:{n}",
+            url=row["url"], creator=f"own:{workspace}", niche=niche, caption=row["caption"],
+            published_at=row["published_at"] or None, views=int(views) if views is not None else None,
+            likes=_int(row["likes"]), comments=_int(row["comments"]), shares=_int(row["shares"]),
+            saves=_int(row["saves"]), skip_rate=skip, local_path=_match_video(row, videos), workspace=workspace,
+        ))
+    return records
+
+
+def _int(value: str) -> int | None:
+    number = _num(value)
+    return int(number) if number is not None else None

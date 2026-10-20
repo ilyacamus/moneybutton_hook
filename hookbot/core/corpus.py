@@ -576,7 +576,7 @@ def evidence_synthesis(effects: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "variable": effect["variable"] if effect else None,
             "diff": effect["diff"] if effect else None,
             "q": effect["q"] if effect else None,
-            "n": (effect["n_viral"] + effect["n_control"]) if effect else 0,
+            "n": (effect.get("n") or effect.get("n_viral", 0) + effect.get("n_control", 0)) if effect else 0,
         })
     order = {"доказано: наука + данные": 0, "подтверждено данными (новое знание)": 1,
              "данные против науки — проверить, возможен сдвиг тренда": 2, "данные против практики": 3}
