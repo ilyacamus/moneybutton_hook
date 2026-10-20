@@ -16,8 +16,15 @@ from .core import audience, corpus, instagram, learning, literature, target, val
 from .core.memory import METRIC_FIELDS, MemoryStore
 from .engine import EngineError, HookEngine, HookInput
 from .scout import Scout, ScoutConfig
+from .transcribe import make_transcriber
 
 DEFAULT_DB = os.getenv("HOOKBOT_DB", "data/hookbot.db")
+
+
+def _scout(store: MemoryStore, engine: HookEngine, ig) -> Scout:
+    """The scout with this machine's settings: Instagram source, limits, speech recognition (SCOUT_ASR=1)."""
+    transcriber = make_transcriber() if os.getenv("SCOUT_ASR") == "1" else None
+    return Scout(store, engine, ig=ig, config=ScoutConfig.from_env(), transcriber=transcriber)
 
 
 def _read(value: str | None) -> str:
@@ -86,8 +93,15 @@ async def run(args: argparse.Namespace) -> int:
             print(f"Одобрено: {len(chosen)}")
         print(render.render_papers(literature.pending(store), f))
         return 0
-    if args.command == "scout" and args.action in ("watch", "unwatch", "list", "import"):
+    if args.command == "scout" and args.action in ("watch", "unwatch", "list", "import", "seed"):
         c = corpus.Corpus(store)
+        if args.action == "seed":
+            names = [line.split("#")[0].strip().lstrip("@").lower() for line in Path(args.target).read_text("utf-8").splitlines()]
+            names = list(dict.fromkeys(n for n in names if n))
+            for name in names:
+                c.watch(ws, name, niche=args.niche or store.get_profile(ws)["niche"])
+            print(f"В наблюдение добавлено: {len(names)}")
+            return 0
         if args.action == "watch":
             c.watch(ws, args.target, niche=args.niche or store.get_profile(ws)["niche"])
         elif args.action == "unwatch":
@@ -104,7 +118,7 @@ async def run(args: argparse.Namespace) -> int:
 
     engine = HookEngine(store)
     if args.command == "scout":
-        scout = Scout(store, engine, ig=instagram.from_env(), config=ScoutConfig.from_env())
+        scout = _scout(store, engine, instagram.from_env())
         if args.action == "once":
             summary = await scout.run_once()
             print(summary)
@@ -123,7 +137,7 @@ async def run(args: argparse.Namespace) -> int:
             print(f"Из таблицы: {len(table)} роликов, без видеофайла: {missing}")
             if ig is None:
                 records = table  # no Instagram connection: the table is the whole channel
-        scout = Scout(store, engine, ig=ig, config=ScoutConfig.from_env())
+        scout = _scout(store, engine, ig)
 
         async def progress(text: str) -> None:
             print(text)
@@ -135,7 +149,7 @@ async def run(args: argparse.Namespace) -> int:
         print(render.render_audience(report, f))
         return 0
     if args.command == "target":
-        scout = Scout(store, engine, ig=instagram.from_env(), config=ScoutConfig.from_env())
+        scout = _scout(store, engine, instagram.from_env())
 
         async def say(text: str) -> None:
             print(text)
@@ -145,7 +159,7 @@ async def run(args: argparse.Namespace) -> int:
         print("\n" + render.render_gap(result["gap"], f))
         return 0
     if args.command == "ref":
-        scout = Scout(store, engine, config=ScoutConfig.from_env())
+        scout = _scout(store, engine, None)
         reel, data = await scout.study_file(
             args.video, workspace=ws, niche=args.niche or store.get_profile(ws)["niche"], views=args.views,
             typical_views=args.typical, caption=_read(args.caption),
@@ -245,8 +259,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("gap", help="последний профиль аудитории и сравнение с её залетевшим контентом")
 
     sp = sub.add_parser("scout", help="робот-разведчик: собирает Reels, находит залетевшие, учится")
-    sp.add_argument("action", choices=("once", "run", "watch", "unwatch", "list", "import"))
-    sp.add_argument("target", nargs="?", help="аккаунт для watch/unwatch или файл JSONL для import")
+    sp.add_argument("action", choices=("once", "run", "watch", "unwatch", "list", "import", "seed"))
+    sp.add_argument("target", nargs="?", help="аккаунт для watch/unwatch, файл JSONL для import "
+                                              "или файл со списком аккаунтов (по одному в строке) для seed")
     sp.add_argument("--niche")
 
     sp = sub.add_parser("ref", help="разобрать залетевший ролик (видеофайл) и добавить в корпус")

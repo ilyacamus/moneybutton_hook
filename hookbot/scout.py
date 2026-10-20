@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .core import audience, corpus, instagram, knowledge, literature, target, video
+from .core import audience, corpus, instagram, knowledge, literature, target, video, webig
 from .core.corpus import Corpus
 from .core.memory import MemoryStore, now_iso
 from .core.video import Frame
@@ -38,6 +38,11 @@ from .engine import EngineError, HookEngine
 log = logging.getLogger(__name__)
 TOKEN_WS = "__ig_token__"
 OPENING_WORDS = 15  # ≈ the first 3–5 seconds of speech
+EXPAND_WS = "__expand__"
+CURSOR_WS = "__collect_cursor__"
+# Default niche: crypto and trading for a Russian-speaking audience (override with NICHE_KEYWORDS).
+NICHE_KEYWORDS = ("крипт", "биткоин", "bitcoin", "btc", "трейд", "trading", "бирж", "usdt", "альткоин", "токен",
+                  "фьючерс", "депозит", "индикатор", "сигнал", "лонг", "шорт", "инвест", "tradingview", "p2p")
 
 
 def opening_words(transcript: str, n: int = OPENING_WORDS) -> str:
@@ -54,9 +59,15 @@ class ScoutConfig:
     interval_minutes: float = 60
     literature_every_days: float = 7
     own_workspace: str | None = None  # workspace whose Instagram account the token belongs to
+    collect_per_cycle: int = 0  # creators read per cycle, oldest-read first (0 = all)
+    expand_per_cycle: int = 3  # watched creators whose "related accounts" are explored per cycle (0 = off)
+    expand_checks_per_cycle: int = 6  # candidates checked per cycle
+    niche_keywords: tuple[str, ...] = NICHE_KEYWORDS
+    niche_min_share: float = 0.3  # share of a candidate's recent captions that must be on the niche's topic
 
     @classmethod
     def from_env(cls) -> "ScoutConfig":
+        keywords = tuple(k.strip().lower() for k in os.getenv("NICHE_KEYWORDS", "").split(",") if k.strip())
         return cls(
             media_per_account=int(os.getenv("SCOUT_MEDIA_PER_ACCOUNT", cls.media_per_account)),
             study_per_cycle=int(os.getenv("SCOUT_STUDY_PER_CYCLE", cls.study_per_cycle)),
@@ -64,6 +75,10 @@ class ScoutConfig:
             interval_minutes=float(os.getenv("SCOUT_INTERVAL_MINUTES", cls.interval_minutes)),
             literature_every_days=float(os.getenv("SCOUT_LITERATURE_DAYS", cls.literature_every_days)),
             own_workspace=os.getenv("SCOUT_OWN_WORKSPACE") or None,
+            collect_per_cycle=int(os.getenv("SCOUT_COLLECT_PER_CYCLE", cls.collect_per_cycle)),
+            expand_per_cycle=int(os.getenv("SCOUT_EXPAND_PER_CYCLE", cls.expand_per_cycle)),
+            expand_checks_per_cycle=int(os.getenv("SCOUT_EXPAND_CHECKS", cls.expand_checks_per_cycle)),
+            niche_keywords=keywords or NICHE_KEYWORDS,
         )
 
 
@@ -78,6 +93,7 @@ class CycleSummary:
     alerts: list[str] = field(default_factory=list)
     papers: int = 0
     errors: list[str] = field(default_factory=list)
+    discovered: list[str] = field(default_factory=list)
 
 
 class Scout:
@@ -101,13 +117,26 @@ class Scout:
 
     # 1. collect ------------------------------------------------------------
 
+    def _due(self, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """This cycle's share of the watchlist, rotating so every creator is read in turn."""
+        k = self.config.collect_per_cycle
+        if k <= 0 or k >= len(entries):
+            return entries
+        state = self.store.latest_insight(CURSOR_WS)
+        start = (state["content"]["next"] if state else 0) % len(entries)
+        self.store.save_insight(CURSOR_WS, {"next": (start + k) % len(entries)}, n_results=0)
+        return (entries + entries)[start:start + k]
+
     async def collect(self, summary: CycleSummary) -> int:
         if self.ig is None:
             return 0
         n = 0
-        for entry in self.corpus.watchlist():
+        for entry in self._due(self.corpus.watchlist()):
             try:
                 profile, media = await asyncio.to_thread(self.ig.discover, entry["username"], self.config.media_per_account)
+            except webig.Blocked as exc:  # Instagram asked to slow down: stop the cycle, not just this creator
+                summary.errors.append(str(exc))
+                break
             except instagram.InstagramError as exc:
                 summary.errors.append(f"@{entry['username']}: {exc}")
                 continue
@@ -127,6 +156,59 @@ class Scout:
                 self.corpus.upsert(rec)
                 n += 1
         return n
+
+    # 2b. grow the niche on its own ------------------------------------------
+
+    def on_niche(self, profile: dict[str, Any], media: list[dict[str, Any]]) -> bool:
+        """Does a candidate make content for the same niche: its bio or enough recent captions mention it."""
+        words = self.config.niche_keywords
+        hit = lambda text: any(w in (text or "").lower() for w in words)  # noqa: E731
+        reels = [m for m in media if m["media_product_type"] == "REELS"]
+        if not reels:
+            return False
+        share = sum(hit(m["caption"]) for m in media) / max(1, len(media))
+        return hit(profile.get("biography", "")) or share >= self.config.niche_min_share
+
+    async def expand(self, summary: CycleSummary) -> None:
+        """Explore the accounts Instagram shows next to watched creators and follow the ones on the niche."""
+        if self.ig is None or self.config.expand_per_cycle <= 0 or not hasattr(self.ig, "related"):
+            return
+        state = (self.store.latest_insight(EXPAND_WS) or {}).get("content") or {"checked": [], "explored": {}}
+        checked, explored = set(state["checked"]), dict(state["explored"])
+        watched = self.corpus.watchlist()
+        known = {e["username"] for e in watched} | checked
+        sources = sorted(watched, key=lambda e: explored.get(e["username"], ""))[: self.config.expand_per_cycle]
+        budget = self.config.expand_checks_per_cycle
+        try:
+            for source in sources:
+                explored[source["username"]] = now_iso()
+                for username in await asyncio.to_thread(self.ig.related, source["username"]):
+                    if budget <= 0:
+                        break
+                    if username in known:
+                        continue
+                    known.add(username)
+                    checked.add(username)
+                    budget -= 1
+                    try:
+                        found, media = await asyncio.to_thread(self.ig.discover, username, self.config.media_per_account)
+                        profile = await asyncio.to_thread(self.ig.profile, username) if hasattr(self.ig, "profile") else {}
+                    except webig.Blocked:
+                        raise
+                    except instagram.InstagramError:
+                        continue
+                    if self.on_niche(profile, media):
+                        self.corpus.watch(source["workspace"], username, niche=source["niche"])
+                        summary.discovered.append(username)
+                        for rec in instagram.records_from_discovery(found, media, niche=source["niche"]):
+                            self.corpus.upsert(rec)  # already fetched: no second request next cycle
+                            summary.collected += 1
+        except webig.Blocked as exc:
+            summary.errors.append(str(exc))
+        finally:
+            self.store.save_insight(EXPAND_WS, {"checked": sorted(checked)[-5000:], "explored": explored}, n_results=0)
+        if summary.discovered:
+            summary.alerts.append("Новые авторы ниши: " + ", ".join(f"@{u}" for u in summary.discovered))
 
     # 3. study --------------------------------------------------------------
 
@@ -446,6 +528,7 @@ class Scout:
         summary = CycleSummary()
         await self.check_token(summary)
         summary.collected = await self.collect(summary)
+        await self.expand(summary)
         summary.labeled = self.corpus.label_all()
         await self.study(summary)
         summary.own_results = self.sync_own_results()

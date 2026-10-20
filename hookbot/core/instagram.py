@@ -179,10 +179,19 @@ class InstagramGraph:
 
 
 def from_env(env: Mapping[str, str] | None = None) -> Any:
-    """The configured Instagram source: the official Graph API (``IG_ACCESS_TOKEN``),
-    else public data through Apify (``APIFY_TOKEN`` + ``IG_USERNAME``), else None."""
+    """The configured Instagram source. ``IG_SOURCE`` picks one explicitly (web | apify | graph); otherwise the
+    official Graph API (``IG_ACCESS_TOKEN``), else Apify (``APIFY_TOKEN`` + ``IG_USERNAME``), else None."""
     env = os.environ if env is None else env
     clean = {k: v for k, v in env.items() if v and "${" not in v}  # an unset plugin option arrives as a placeholder
+    source = clean.get("IG_SOURCE", "").lower()
+    if source == "web":  # own collector: public data, no login, no third parties
+        from .webig import WebInstagram
+
+        return WebInstagram()
+    if source == "apify" and clean.get("APIFY_TOKEN"):
+        from .apify import ApifyInstagram
+
+        return ApifyInstagram(clean["APIFY_TOKEN"], clean.get("IG_USERNAME", ""))
     if clean.get("IG_ACCESS_TOKEN"):
         return InstagramGraph(clean["IG_ACCESS_TOKEN"], clean.get("IG_USER_ID", ""))
     if clean.get("APIFY_TOKEN"):
@@ -263,6 +272,10 @@ def check_connection(ig: InstagramGraph, *, discover_username: str | None = None
         from . import apify
 
         return apify.check_connection(ig, discover_username=discover_username)
+    if getattr(ig, "kind", "") == "web":
+        from . import webig
+
+        return webig.check_connection(ig, discover_username=discover_username)
     steps: list[dict[str, Any]] = []
 
     def step(name: str, ok: bool | None, detail: str, fix: str = "") -> None:
