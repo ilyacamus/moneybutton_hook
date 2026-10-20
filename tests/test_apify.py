@@ -26,6 +26,8 @@ class FakeApify:
     def __init__(self, clip, *, own_reels=12, seed=5):
         self.clip = clip
         self.runs = []
+        self.datasets, self.run_state = {}, {}
+        self.used_usd = 0.0
         self.token_ok = True
         rng = random.Random(seed)
         self.accounts = {"me_reels": [], "coach_a": [], "coach_b": [], "coach_c": [], "coach_d": []}
@@ -48,12 +50,28 @@ class FakeApify:
                 "latestComments": [{"text": "Где взять деньги на рекламу?"}]}
 
     def __call__(self, method, path, body):
+        """Apify API v2: start a run, poll it, read its dataset; account limits; who am I."""
         if path == "users/me":
             if not self.token_ok:
                 raise ApifyError("Apify: User was not found or authentication token is not valid")
             return {"data": {"username": "apify_user"}}
-        actor = re.match(r"acts/([^/]+)/run-sync-get-dataset-items", path).group(1)
+        if path == "users/me/limits":
+            return {"data": {"limits": {"maxMonthlyUsageUsd": 5}, "current": {"monthlyUsageUsd": self.used_usd}}}
+        if path.startswith("actor-runs/"):  # the poll: the run finished meanwhile
+            run_id = path.split("/")[1].split("?")[0]
+            return {"data": {**self.run_state[run_id], "status": "SUCCEEDED"}}
+        if path.startswith("datasets/"):
+            return self.datasets[path.split("/")[1]]
+        actor = re.match(r"acts/([^/]+)/runs", path).group(1)
         self.runs.append((actor, body))
+        run_id = f"run{len(self.runs)}"
+        self.datasets[f"ds{run_id}"] = self.items(actor, body)
+        # Every other run is still running after the first wait, to exercise polling.
+        self.run_state[run_id] = {"id": run_id, "defaultDatasetId": f"ds{run_id}", "usageTotalUsd": 0.01,
+                                  "status": "RUNNING" if len(self.runs) % 2 else "SUCCEEDED"}
+        return {"data": self.run_state[run_id]}
+
+    def items(self, actor, body):
         if actor == "apify~instagram-reel-scraper":
             name = body["username"][0]
             if name not in self.accounts:
@@ -155,6 +173,53 @@ def test_http_errors_become_readable(monkeypatch):
     monkeypatch.setattr(apify.urllib.request, "urlopen", fail)
     with pytest.raises(ApifyError, match="300"):
         ApifyClient("t").run("apify/instagram-reel-scraper", {})
+
+
+def test_budget_guard_and_transcripts(fake, monkeypatch):
+    client = ApifyClient("tok", requester=fake)
+    fake.used_usd = 4.9
+    with pytest.raises(ApifyError, match="осталось \\$0.10"):
+        ApifyInstagram("tok", "me_reels", client=client).discover("coach_a", 50)  # 50 × $0.003 > $0.10
+    assert fake.runs == []  # nothing was started
+    fake.used_usd = 0
+    _, media = ApifyInstagram("tok", "me_reels", client=client).discover("coach_a", 5)
+    assert "includeTranscript" not in fake.runs[-1][1] and client.last_cost_usd == 0.01
+    monkeypatch.setattr(apify, "TRANSCRIPTS", True)
+    ApifyInstagram("tok", "me_reels", client=client).discover("coach_b", 5)
+    assert fake.runs[-1][1]["includeTranscript"] is True
+
+
+def test_source_transcript_reaches_the_record(fake):
+    fake.accounts["coach_a"][0]["transcript"] = "Смотри на эту линию на графике, за ней следят все фонды и частные трейдеры, поэтому"
+    _, media = ApifyInstagram("tok", "me_reels", client=ApifyClient("tok", requester=fake)).discover("coach_a", 3)
+    rec = instagram.records_from_discovery({"username": "coach_a"}, media)[0]
+    assert rec.transcript.startswith("Смотри на эту линию")
+    from hookbot.scout import opening_words
+    assert opening_words(rec.transcript, 5) == "Смотри на эту линию на …"
+
+
+def test_proxy_injected_token_sends_no_header(monkeypatch):
+    seen = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"data": {"username": "u"}}'
+
+    def urlopen(request, timeout):
+        seen["auth"] = request.get_header("Authorization")
+        return Resp()
+
+    monkeypatch.setattr(apify.urllib.request, "urlopen", urlopen)
+    ApifyClient(apify.PROXY_AUTH).me()
+    assert seen["auth"] is None
+    ApifyClient("tok").me()
+    assert seen["auth"] == "Bearer tok"
 
 
 async def test_audit_on_public_numbers(store, client, ig):

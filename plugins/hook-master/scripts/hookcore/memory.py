@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS reels (
     video_url       TEXT NOT NULL DEFAULT '',
     thumbnail_url   TEXT NOT NULL DEFAULT '',
     local_path      TEXT NOT NULL DEFAULT '',
+    transcript      TEXT NOT NULL DEFAULT '',
     status          TEXT NOT NULL DEFAULT 'new',
     analysis        TEXT,
     features        TEXT,
@@ -152,6 +153,9 @@ class MemoryStore:
                 self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA foreign_keys=ON")
             self.conn.executescript(SCHEMA)
+            columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(reels)")}
+            if "transcript" not in columns:  # databases created before transcripts were stored
+                self.conn.execute("ALTER TABLE reels ADD COLUMN transcript TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         self.conn.close()

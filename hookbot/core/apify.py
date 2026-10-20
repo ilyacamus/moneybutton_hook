@@ -39,6 +39,14 @@ ACTORS = {
     "search": os.getenv("APIFY_SEARCH_ACTOR", "apify/instagram-scraper"),
 }
 SYNC_LIMIT_S = 300  # run-sync endpoints answer 408 after this
+# Measured on apify/instagram-reel-scraper (October 2026): ~$0.0027 per reel; with includeTranscript ~$0.07 per
+# reel — 25× more, so transcripts are off unless APIFY_TRANSCRIPTS=1 (local Whisper does it for free).
+COST_PER_REEL_USD = float(os.getenv("APIFY_COST_PER_REEL", "0.003"))
+COST_PER_TRANSCRIPT_USD = 0.075
+TRANSCRIPTS = os.getenv("APIFY_TRANSCRIPTS") == "1"
+# APIFY_TOKEN=proxy: the token is stored as an environment secret that the egress proxy adds to requests to
+# api.apify.com, so the process never sees it (Claude Code cloud environments).
+PROXY_AUTH = "proxy"
 
 Requester = Callable[[str, str, dict[str, Any] | None], Any]
 
@@ -48,15 +56,18 @@ class ApifyError(InstagramError):
 
 
 class ApifyClient:
-    def __init__(self, token: str, *, requester: Requester | None = None, timeout: float = SYNC_LIMIT_S + 30):
+    def __init__(self, token: str, *, requester: Requester | None = None, timeout: float = 90):
         self.token = token
         self.timeout = timeout
+        self.last_cost_usd: float | None = None  # spent by this client so far, from each run's usageTotalUsd
         self._request = requester or self._http
 
     def _http(self, method: str, path: str, body: dict[str, Any] | None) -> Any:
         data = json.dumps(body).encode() if body is not None else None
-        request = urllib.request.Request(f"{API_URL}/{path}", data=data, method=method, headers={
-            "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"})
+        headers = {"Content-Type": "application/json"}
+        if self.token and self.token != PROXY_AUTH:
+            headers["Authorization"] = f"Bearer {self.token}"  # otherwise the egress proxy injects the secret
+        request = urllib.request.Request(f"{API_URL}/{path}", data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as resp:
                 return json.loads(resp.read().decode() or "null")
@@ -71,10 +82,37 @@ class ApifyClient:
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise ApifyError(f"Apify недоступен: {exc} (домен api.apify.com должен быть разрешён)") from exc
 
-    def run(self, actor: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
-        """Run an actor and return its dataset items (synchronous call, up to 5 minutes)."""
-        path = f"acts/{urllib.parse.quote(actor.replace('/', '~'))}/run-sync-get-dataset-items?timeout={SYNC_LIMIT_S}"
-        items = self._request("POST", path, payload)
+    def remaining_usd(self) -> float | None:
+        """What is left of the account's monthly usage limit (None if Apify does not say)."""
+        data = (self._request("GET", "users/me/limits", None) or {}).get("data") or {}
+        limit = (data.get("limits") or {}).get("maxMonthlyUsageUsd")
+        used = (data.get("current") or {}).get("monthlyUsageUsd")
+        return None if limit is None or used is None else float(limit) - float(used)
+
+    def run(self, actor: str, payload: dict[str, Any], *, max_wait_s: float = 600,
+            est_cost_usd: float | None = None) -> list[dict[str, Any]]:
+        """Start an actor run, wait for it in short polls and return its dataset items.
+
+        Short polls (``waitForFinish`` ≤ 60 s) instead of one long synchronous call:
+        proxies and load balancers cut idle connections long before 5 minutes.
+        With ``est_cost_usd`` the run is refused when the month's remaining budget cannot cover it.
+        """
+        if est_cost_usd:
+            left = self.remaining_usd()
+            if left is not None and left < est_cost_usd:
+                raise ApifyError(f"Бюджет Apify: осталось ${left:.2f} в этом месяце, запуск оценивается в "
+                                 f"${est_cost_usd:.2f} — пополните баланс или уменьшите число роликов")
+        started = self._request("POST", f"acts/{urllib.parse.quote(actor.replace('/', '~'))}/runs?waitForFinish=50", payload)
+        run = (started or {}).get("data") or {}
+        deadline = time.time() + max_wait_s
+        while run.get("status") in ("READY", "RUNNING", "TIMING-OUT", "ABORTING"):
+            if time.time() > deadline:
+                raise ApifyError(f"Apify: {actor} не закончил за {max_wait_s:.0f} с — уменьшите число роликов")
+            run = (self._request("GET", f"actor-runs/{run['id']}?waitForFinish=50", None) or {}).get("data") or {}
+        if run.get("status") != "SUCCEEDED":
+            raise ApifyError(f"Apify: {actor} завершился со статусом {run.get('status') or 'неизвестно'}")
+        self.last_cost_usd = (self.last_cost_usd or 0) + float(run.get("usageTotalUsd") or 0)
+        items = self._request("GET", f"datasets/{run['defaultDatasetId']}/items?clean=true&format=json", None)
         if not isinstance(items, list):
             raise ApifyError(f"Apify: неожиданный ответ {actor}")
         return [i for i in items if isinstance(i, dict)]
@@ -129,6 +167,7 @@ def media_from_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "thumbnail_url": _first(item, "displayUrl", "thumbnailUrl", "thumbnail_url") or "",
         "owner": str(_first(item, "ownerUsername", "username") or "").lower(),
         "latest_comments": [c.get("text") for c in item.get("latestComments") or [] if isinstance(c, dict) and c.get("text")],
+        "transcript": _first(item, "transcript") or "",
     }
 
 
@@ -190,7 +229,12 @@ class ApifyInstagram:
         username = username.strip().lstrip("@").lower()
 
         def fetch() -> list[dict[str, Any]]:
-            items = self.client.run(ACTORS["reels"], {"username": [username], "resultsLimit": limit})
+            payload: dict[str, Any] = {"username": [username], "resultsLimit": limit}
+            per_reel = COST_PER_REEL_USD
+            if TRANSCRIPTS:
+                payload["includeTranscript"] = True
+                per_reel += COST_PER_TRANSCRIPT_USD
+            items = self.client.run(ACTORS["reels"], payload, est_cost_usd=per_reel * limit)
             media = [m for m in (media_from_item(i) for i in items) if m]
             if not media:
                 reason = _errors(items) or "нет публичных Reels: аккаунт закрыт, не существует или пуст"

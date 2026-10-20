@@ -64,6 +64,7 @@ class ReelRecord:
     thumbnail_url: str = ""
     local_path: str = ""
     workspace: str = ""
+    transcript: str = ""  # speech of the whole video when the source provides it
 
 
 def label_for(score: float | None) -> str | None:
@@ -99,7 +100,7 @@ class Corpus:
     # ------------------------------------------------------------------ #
 
     UPDATABLE = ("url", "creator", "caption", "published_at", "views", "likes", "comments", "shares", "saves",
-                 "skip_rate", "followers", "baseline_views", "video_url", "thumbnail_url", "local_path")
+                 "skip_rate", "followers", "baseline_views", "video_url", "thumbnail_url", "local_path", "transcript")
 
     def upsert(self, rec: ReelRecord) -> int:
         """Insert a reel or refresh its metrics; analysis and status are kept."""

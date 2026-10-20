@@ -218,6 +218,7 @@ def records_from_discovery(profile: dict[str, Any], media: list[dict[str, Any]],
             caption=m.get("caption") or "", published_at=m.get("timestamp"), views=m.get("view_count"),
             likes=m.get("like_count"), comments=m.get("comments_count"), followers=profile.get("followers_count"),
             video_url=m.get("media_url") or "", thumbnail_url=m.get("thumbnail_url") or "", workspace=workspace,
+            transcript=m.get("transcript") or "",
         )
         for m in media if _is_reel(m)
     ]

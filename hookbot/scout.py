@@ -37,6 +37,13 @@ from .engine import EngineError, HookEngine
 
 log = logging.getLogger(__name__)
 TOKEN_WS = "__ig_token__"
+OPENING_WORDS = 15  # ≈ the first 3–5 seconds of speech
+
+
+def opening_words(transcript: str, n: int = OPENING_WORDS) -> str:
+    """The start of a whole-video transcript: what is said in the hook window."""
+    words = transcript.split()
+    return " ".join(words[:n]) + (" …" if len(words) > n else "")
 
 
 @dataclass
@@ -142,6 +149,8 @@ class Scout:
                     transcript = await asyncio.to_thread(self.transcriber.first_seconds, path)
                 except Exception as exc:  # noqa: BLE001 - speech is optional
                     log.warning("Transcription failed for reel %s: %s", reel["id"], exc)
+            if not transcript and reel.get("transcript"):
+                transcript = opening_words(reel["transcript"])
             return probe.frames, probe.facts(), probe.facts_text(), transcript
         if reel["thumbnail_url"]:
             thumb = await asyncio.to_thread(instagram.download, reel["thumbnail_url"], tmp / "thumb.jpg",
