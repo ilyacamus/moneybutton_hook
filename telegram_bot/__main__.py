@@ -12,7 +12,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
-from hookbot.core.instagram import InstagramGraph
+from hookbot.core import instagram
 from hookbot.core.memory import MemoryStore
 from hookbot.engine import HookEngine
 from hookbot.scout import Scout, ScoutConfig
@@ -53,7 +53,7 @@ async def main() -> None:
     # The scout: the Instagram token belongs to the bot owner's account, so the
     # owner's workspace is the one whose own reels and audience it audits.
     config = ScoutConfig.from_env()
-    ig = InstagramGraph.from_env()
+    ig = instagram.from_env()
     if ig and not config.own_workspace and settings.admin_ids:
         config.own_workspace = workspace_of(min(settings.admin_ids))
 

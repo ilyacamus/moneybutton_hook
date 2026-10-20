@@ -2,7 +2,8 @@
 
 They run only when credentials are present (and the network allows the hosts):
     ANTHROPIC_API_KEY                       — Claude tests
-    IG_ACCESS_TOKEN (IG_USER_ID optional)  — Instagram tests
+    IG_ACCESS_TOKEN (IG_USER_ID optional)  — Instagram Graph API tests
+    APIFY_TOKEN, IG_USERNAME               — public data through Apify
     HOOKBOT_LIVE_IG_USERNAME                — a public business/creator account to discover
 Run: pytest -m live -v
 Every test spends real API credits (a few cents each).
@@ -62,6 +63,23 @@ async def test_claude_finds_real_fresh_papers(live_engine):
     scan = await live_engine.scan_literature("2025-01-01")
     assert scan.papers, "expected at least one study since 2025"
     assert all(p.link.startswith("http") for p in scan.papers)
+
+
+needs_apify = pytest.mark.skipif(not (os.getenv("APIFY_TOKEN") and os.getenv("IG_USERNAME")),
+                                 reason="APIFY_TOKEN / IG_USERNAME not set")
+
+
+@needs_apify
+def test_apify_public_data_is_ready():
+    from hookbot.core.apify import ApifyInstagram
+
+    ig = ApifyInstagram(os.environ["APIFY_TOKEN"], os.environ["IG_USERNAME"])
+    steps = instagram.check_connection(ig)
+    for s in steps:
+        print(s)
+    assert all(s["ok"] is not False for s in steps), [s for s in steps if s["ok"] is False]
+    records = instagram.own_records(ig, workspace="live", limit=10)
+    assert records and any(r.views for r in records), "the reel scraper returned no plays"
 
 
 @needs_ig

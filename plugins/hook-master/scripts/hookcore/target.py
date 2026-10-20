@@ -62,9 +62,10 @@ def channel_signals(
     by_views = sorted((r for r in studied if r["views"]), key=lambda r: -r["views"])
     report = audience.latest_report(store, workspace)
     findings = [
-        {"variable": e["label"], "rho": e["rho"], "q": e["q"], "verdict": e["verdict"]}
-        for e in (report or {}).get("hold_effects", []) if e["verdict"] != "не подтверждено"
-    ][:8]
+        {"outcome": outcome, "variable": e["label"], "rho": e["rho"], "q": e["q"], "verdict": e["verdict"]}
+        for outcome in ("hold", "views", "engagement", "saves")
+        for e in (report or {}).get(f"{outcome}_effects", []) if e["verdict"] != "не подтверждено"
+    ][:12]
     return {
         "niche": profile["niche"],
         "stated_audience": profile["audience"],
@@ -123,7 +124,13 @@ def gap_report(store: MemoryStore, workspace: str) -> dict[str, Any]:
     gaps.sort(key=lambda g: (g["q"], -abs(g["diff"])))
     by_gap = {g["variable"]: g for g in gaps}
 
-    own_audit = {e["variable"]: e for e in (audience.latest_report(store, workspace) or {}).get("hold_effects", [])}
+    # The creator's own audit: hold when the skip rate is known, else the public outcomes (views, engagement).
+    own_audit: dict[str, dict[str, Any]] = {}
+    audit = audience.latest_report(store, workspace) or {}
+    for outcome, what in (("engagement", "вовлечённость"), ("views", "просмотры"), ("hold", "удержание 3 с")):
+        for e in audit.get(f"{outcome}_effects", []):
+            if e["verdict"] != "не подтверждено" or e["variable"] not in own_audit:
+                own_audit[e["variable"]] = {**e, "outcome": what}
     recommendations = []
     for e in works:
         if not (e["verdict"].startswith("подтверждено") or e["verdict"].startswith("тенденция")):
@@ -136,7 +143,7 @@ def gap_report(store: MemoryStore, workspace: str) -> dict[str, Any]:
         if mine and mine["verdict"] != "не подтверждено" and (mine["rho"] > 0) != up:
             agreement = "у вашей аудитории наоборот — не применять вслепую, проверить A/B"
         elif mine and mine["verdict"] != "не подтверждено":
-            agreement = f"подтверждается и в вашем канале (ρ={mine['rho']:+.2f})"
+            agreement = f"подтверждается и в вашем канале ({mine['outcome']}, ρ={mine['rho']:+.2f})"
         else:
             agreement = "в вашем канале пока не проверено"
         lit = literature_of(e["variable"])

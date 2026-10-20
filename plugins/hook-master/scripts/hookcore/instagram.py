@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .corpus import ReelRecord
 
@@ -178,6 +178,20 @@ class InstagramGraph:
         return [c["text"] for c in payload.get("data", []) if c.get("text")]
 
 
+def from_env(env: Mapping[str, str] | None = None) -> Any:
+    """The configured Instagram source: the official Graph API (``IG_ACCESS_TOKEN``),
+    else public data through Apify (``APIFY_TOKEN`` + ``IG_USERNAME``), else None."""
+    env = os.environ if env is None else env
+    clean = {k: v for k, v in env.items() if v and "${" not in v}  # an unset plugin option arrives as a placeholder
+    if clean.get("IG_ACCESS_TOKEN"):
+        return InstagramGraph(clean["IG_ACCESS_TOKEN"], clean.get("IG_USER_ID", ""))
+    if clean.get("APIFY_TOKEN"):
+        from .apify import ApifyInstagram
+
+        return ApifyInstagram(clean["APIFY_TOKEN"], clean.get("IG_USERNAME", ""))
+    return None
+
+
 def _parse_insights(payload: dict[str, Any]) -> dict[str, float]:
     out = {}
     for item in payload.get("data", []):
@@ -244,6 +258,10 @@ def check_connection(ig: InstagramGraph, *, discover_username: str | None = None
     ``ok`` is True (works), None (partly: the robot copes without it) or
     False (blocks the channel audit or the search for the audience's creators).
     """
+    if getattr(ig, "kind", "") == "apify":
+        from . import apify
+
+        return apify.check_connection(ig, discover_username=discover_username)
     steps: list[dict[str, Any]] = []
 
     def step(name: str, ok: bool | None, detail: str, fix: str = "") -> None:
@@ -350,6 +368,37 @@ def own_records(ig: InstagramGraph, *, workspace: str, niche: str = "", limit: i
             thumbnail_url=m.get("thumbnail_url") or "", workspace=workspace,
         ))
     return records
+
+
+def reel_code(value: str | None) -> str:
+    """The reel's code from a link (``/reel/<code>/``) or a bare code."""
+    value = (value or "").strip()
+    m = _SHORTCODE.search(value)
+    if m:
+        return m.group(1)
+    return value if re.fullmatch(r"[A-Za-z0-9_-]{5,}", value) and not value.isdigit() else ""
+
+
+def merge_own_stats(records: list[ReelRecord], table: list[ReelRecord]) -> int:
+    """Add the creator's private numbers (skip rate, saves, shares, exact views) and video files
+    from their stats table to the reels found online, matched by the reel's code. Returns the matches."""
+    by_code = {}
+    for row in table:
+        code = reel_code(row.url) or reel_code(row.external_id)
+        if code:
+            by_code[code] = row
+    matched = 0
+    for rec in records:
+        row = by_code.get(reel_code(rec.url) or reel_code(rec.external_id))
+        if row is None:
+            continue
+        matched += 1
+        for field in ("skip_rate", "saves", "shares", "views", "likes", "comments"):
+            if getattr(row, field) is not None:
+                setattr(rec, field, getattr(row, field))
+        rec.local_path = row.local_path or rec.local_path
+        rec.caption = rec.caption or row.caption
+    return matched
 
 
 def download(url: str, dest: Path, *, max_bytes: int = MAX_DOWNLOAD_BYTES, timeout: float = 60) -> Path:

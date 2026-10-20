@@ -400,9 +400,14 @@ def render_audience(report: dict[str, Any] | None, f: type[Plain] = HTML) -> str
     if report.get("median_views"):
         lines.append(f"Медиана просмотров: {report['median_views']:,.0f}".replace(",", " ")
                      + f"; прорывных роликов (≥3× медианы): {report['breakouts']}")
+    if report.get("median_engagement") is not None:
+        lines.append(f"Медиана лайков и комментариев: {report['median_engagement']} на 100 просмотров")
     if report["n_studied"] < report["min_reels"]:
-        lines.append(f.i(f"Для статистики нужно хотя бы {report['min_reels']} разобранных роликов со skip rate. "
+        lines.append(f.i(f"Для статистики нужно хотя бы {report['min_reels']} разобранных роликов. "
                          "Выводы ниже — предварительные."))
+    if not report["n_with_skip_rate"] and report["n_studied"]:
+        lines.append(f.i("Skip rate нет (он виден только вам в статистике): анализ по просмотрам и вовлечённости. "
+                         "Добавьте таблицу со skip rate — появится анализ удержания 3 с."))
 
     def effects(title: str, items: list[dict[str, Any]], kind: str) -> list[str]:
         out = []
@@ -417,13 +422,28 @@ def render_audience(report: dict[str, Any] | None, f: type[Plain] = HTML) -> str
                            f"{e['control']}, q={e['q']} — {e['verdict']}")
         return ([f.b(title)] + out[:8]) if out else []
 
-    hold = effects("Что связано с удержанием первых 3 секунд", report["hold_effects"], "hold")
-    reach = effects("Что отличает ваши прорывные ролики", report["reach_effects"], "reach")
-    if hold or reach:
-        lines += ["", *hold, *([""] if hold and reach else []), *reach]
+    def public(title: str, items: list[dict[str, Any]], outcome: str, unit: str) -> list[str]:
+        out = []
+        for e in items:
+            if e["verdict"] == "не подтверждено":
+                continue
+            extra = (f" ({e[outcome + '_with']}{unit} vs {e[outcome + '_without']}{unit})" if f"{outcome}_with" in e else "")
+            out.append(f"{'⬆️' if e['rho'] > 0 else '⬇️'} {f.esc(e['label'])}: ρ={e['rho']:+.2f}{extra}, q={e['q']} — {e['verdict']}")
+        return ([f.b(title)] + out[:8]) if out else []
+
+    blocks = [b for b in (
+        effects("Что связано с удержанием первых 3 секунд", report["hold_effects"], "hold"),
+        public("Что связано с просмотрами (× медианы канала)", report.get("views_effects", []), "views", "×"),
+        public("Что связано с лайками и комментариями на просмотр", report.get("engagement_effects", []), "engagement", "%"),
+        public("Что связано с сохранениями на просмотр", report.get("saves_effects", []), "saves", "%"),
+        effects("Что отличает ваши прорывные ролики", report["reach_effects"], "reach"),
+    ) if b]
+    if blocks:
+        for block in blocks:
+            lines += ["", *block]
     else:
         lines += ["", f.i("Статистически значимых закономерностей пока нет — нужно больше роликов.")]
-    agreed = [s for s in report.get("hold_synthesis", []) + report.get("reach_synthesis", [])
+    agreed = [s for s in report.get("hold_synthesis", []) + report.get("views_synthesis", []) + report.get("reach_synthesis", [])
               if s["status"] not in ("нет данных", "гипотеза")]
     if agreed:
         lines += ["", f.b("Ваша аудитория и наука")]

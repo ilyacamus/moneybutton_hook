@@ -45,9 +45,10 @@ async def run(args: argparse.Namespace) -> int:
     f = render.Plain
 
     if args.command == "ig-check":
-        ig = instagram.InstagramGraph.from_env()
+        ig = instagram.from_env()
         if ig is None:
-            print("IG_ACCESS_TOKEN не задан — как его получить: docs/INSTAGRAM_SETUP.md", file=sys.stderr)
+            print("Instagram не подключён: нужен IG_ACCESS_TOKEN или APIFY_TOKEN + IG_USERNAME (docs/INSTAGRAM_SETUP.md)",
+                  file=sys.stderr)
             return 1
         steps = await asyncio.to_thread(instagram.check_connection, ig, discover_username=args.username)
         print(render.render_connection(steps, f))
@@ -103,7 +104,7 @@ async def run(args: argparse.Namespace) -> int:
 
     engine = HookEngine(store)
     if args.command == "scout":
-        scout = Scout(store, engine, ig=instagram.InstagramGraph.from_env(), config=ScoutConfig.from_env())
+        scout = Scout(store, engine, ig=instagram.from_env(), config=ScoutConfig.from_env())
         if args.action == "once":
             summary = await scout.run_once()
             print(summary)
@@ -113,22 +114,28 @@ async def run(args: argparse.Namespace) -> int:
             await scout.run_forever()
         return 0
     if args.command == "audit":
-        records = None
+        records = table = None
+        ig = instagram.from_env()
         if args.csv:
-            records = instagram.import_insights_csv(args.csv, workspace=ws, niche=store.get_profile(ws)["niche"],
-                                                    videos_dir=args.videos)
-            missing = sum(1 for r in records if not r.local_path)
-            print(f"Из выгрузки: {len(records)} роликов, без видеофайла: {missing}")
-        scout = Scout(store, engine, ig=instagram.InstagramGraph.from_env(), config=ScoutConfig.from_env())
+            table = instagram.import_insights_csv(args.csv, workspace=ws, niche=store.get_profile(ws)["niche"],
+                                                  videos_dir=args.videos)
+            missing = sum(1 for r in table if not r.local_path)
+            print(f"Из таблицы: {len(table)} роликов, без видеофайла: {missing}")
+            if ig is None:
+                records = table  # no Instagram connection: the table is the whole channel
+        scout = Scout(store, engine, ig=ig, config=ScoutConfig.from_env())
 
         async def progress(text: str) -> None:
             print(text)
 
-        report = await scout.audit(ws, records=records, limit=args.limit, max_study=args.max_study, progress=progress)
+        report = await scout.audit(ws, records=records, stats=table if records is None else None, limit=args.limit,
+                                   max_study=args.max_study, progress=progress)
+        if report.get("stats_matched") is not None:
+            print(f"Строк таблицы сопоставлено с роликами: {report['stats_matched']} из {len(table)}")
         print(render.render_audience(report, f))
         return 0
     if args.command == "target":
-        scout = Scout(store, engine, ig=instagram.InstagramGraph.from_env(), config=ScoutConfig.from_env())
+        scout = Scout(store, engine, ig=instagram.from_env(), config=ScoutConfig.from_env())
 
         async def say(text: str) -> None:
             print(text)
@@ -227,7 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--username", help="чей аккаунт искать через Business Discovery (по умолчанию ваш)")
 
     sp = sub.add_parser("audit", help="аудит вашего канала: что удерживает именно вашу аудиторию")
-    sp.add_argument("--csv", help="выгрузка статистики Reels (CSV из Meta Business Suite / панели профессионала)")
+    sp.add_argument("--csv", help="таблица статистики Reels (выгрузка или docs/templates/my_reels.csv); при подключённом Instagram добавляет skip rate, сохранения и видеофайлы к найденным роликам")
     sp.add_argument("--videos", help="папка с вашими роликами (имя файла содержит id публикации или код из ссылки)")
     sp.add_argument("--limit", type=int, default=100, help="сколько последних роликов взять через API")
     sp.add_argument("--max-study", type=int, default=100, help="сколько роликов разобрать за запуск (каждый — запрос к Claude)")

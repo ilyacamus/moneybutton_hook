@@ -29,7 +29,8 @@ Instagram показывает авторам **skip rate** — долю зри�
 - [**Психология первых 3 секунд**](docs/PSYCHOLOGY.md) — приёмы, механизмы, таймлайн, звук/действие/текст.
 - [**Научный подход**](docs/METHODOLOGY.md) — уровни доказательности, свежие исследования, корпус залетевших, аудит канала, целевая аудитория, проверка точности и ограничения.
 - [**Как оценщик учится**](docs/SELF_LEARNING.md) — калибровка рубрики, влияние триггеров, плейбук, робот-разведчик, автономные напоминания.
-- [**Подключение Instagram**](docs/INSTAGRAM_SETUP.md) — токен и проверка `hookbot ig-check`; без Facebook — аудит по таблице и видеофайлам.
+- [**Подключение Instagram**](docs/INSTAGRAM_SETUP.md) — официальный API, Apify (без Facebook) или файлы; проверка `hookbot ig-check`.
+- [**Первый реальный запуск**](docs/FIRST_RUN.md) — канал → целевая аудитория → обучение, по шагам.
 - [**Как продавать**](docs/BUSINESS.md) — Telegram Stars, себестоимость, распространение плагина.
 - База знаний: [`plugins/hook-master/knowledge/`](plugins/hook-master/knowledge/).
 
@@ -76,7 +77,7 @@ hookbot generate script.txt
 hookbot result 1 --skip 38 --views 12000
 hookbot stats
 
-# аудит канала и целевая аудитория (нужен IG_ACCESS_TOKEN или CSV)
+# аудит канала и целевая аудитория (IG_ACCESS_TOKEN, или APIFY_TOKEN + IG_USERNAME, или таблица)
 hookbot ig-check
 hookbot audit --csv insights.csv --videos ./reels
 hookbot target --budget 40

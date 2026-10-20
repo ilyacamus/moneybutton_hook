@@ -85,7 +85,8 @@ def test_audit_from_csv_export(server, tmp_path, clip):
     assert server._ig() is None  # unresolved ${user_config.…} placeholders mean "not connected"
     path, videos = write_export(tmp_path, clip)
     collected = call(server, "audit_collect", csv_path=str(path), videos_dir=str(videos))
-    assert collected == {"collected": 12, "own_reels": 12, "to_study": 12, "without_video": 0}
+    assert collected == {"collected": 12, "own_reels": 12, "to_study": 12, "without_video": 0, "with_skip_rate": 12,
+                         "table_matched": None}
 
     assert study_all(server, "own", face=lambda good: False) == 12
     report = call(server, "audit_report")
@@ -141,3 +142,18 @@ def test_target_audience_flow(server, tmp_path, clip):
     assert "доказано" in face["literature"]
     assert any(ex["hook"] == WINNER for ex in gap["exemplars"])
     assert "Контент для этой же аудитории" in call(server, "learning_context")["prompt"]
+
+
+def test_audit_through_apify_with_the_stats_table(server, tmp_path, clip):
+    import hookcore.apify as plugin_apify  # the plugin's own copy of the core, importable once the server is loaded
+    from test_apify import FakeApify
+
+    fake = FakeApify(clip)
+    server._ig = lambda: plugin_apify.ApifyInstagram("tok", "me_reels", client=plugin_apify.ApifyClient("tok", requester=fake))
+    table = tmp_path / "stats.csv"
+    table.write_text("Ссылка;Процент пропусков;Сохранения\nhttps://www.instagram.com/reel/Me00x/;31%;40\nMe01x;58%;2\n",
+                     encoding="utf-8")
+    collected = call(server, "audit_collect", csv_path=str(table))
+    assert collected["collected"] == 12 and collected["table_matched"] == 2 and collected["with_skip_rate"] == 2
+    checked = call(server, "instagram_check")
+    assert checked["ready"] and any(s["step"] == "Ваши Reels" for s in checked["steps"])

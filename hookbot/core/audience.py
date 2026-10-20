@@ -18,7 +18,7 @@ Both are joined with the literature grades, so a finding reads as
 from __future__ import annotations
 
 import random
-from typing import Any
+from typing import Any, Callable
 
 from . import corpus, stats
 from .corpus import CONTROL_LABELS, Corpus
@@ -27,6 +27,7 @@ from .memory import MemoryStore, now_iso
 OWN_SOURCES = ("instagram_own", "own_csv", "own_file")
 REPORT_WS = "__audience__:"
 MIN_REELS = 8
+MIN_VIEWS = 100  # rates on fewer views are noise
 PERMUTATIONS = 2000
 
 
@@ -50,12 +51,43 @@ def _permutation_p(x: list[float], y: list[float], rho: float, seed: int = 11) -
     return (extreme + 1) / (PERMUTATIONS + 1)
 
 
-def hold_correlations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Spearman correlation of each hook variable with the 3-second hold."""
-    studied = [r for r in rows if r["status"] == "studied" and r["skip_rate"] is not None]
+def _hold(r: dict[str, Any]) -> float | None:
+    return 100 - r["skip_rate"] if r["skip_rate"] is not None else None
+
+
+def _views(r: dict[str, Any]) -> float | None:
+    """Views relative to the channel's median of other mature reels (set by ``Corpus.label_all``)."""
+    return r["outlier_score"]
+
+
+def _rate(field: str) -> Callable[[dict[str, Any]], float | None]:
+    def rate(r: dict[str, Any]) -> float | None:
+        if r["outlier_score"] is None or not r["views"] or r["views"] < MIN_VIEWS:
+            return None  # too fresh or too few views for a stable rate
+        if field == "engagement":
+            if r["likes"] is None:
+                return None
+            return 100 * (r["likes"] + (r["comments"] or 0)) / r["views"]
+        return 100 * r[field] / r["views"] if r[field] is not None else None
+    return rate
+
+
+# Outcome → (how it is read, report key). Hold needs the private skip rate; the rest is public or from the table.
+OUTCOMES = {
+    "hold": (_hold, "удержание 3 с, %"),
+    "views": (_views, "просмотры, × медианы канала"),
+    "engagement": (_rate("engagement"), "лайки и комментарии на 100 просмотров"),
+    "saves": (_rate("saves"), "сохранения на 100 просмотров"),
+}
+
+
+def outcome_correlations(rows: list[dict[str, Any]], outcome: str = "hold") -> list[dict[str, Any]]:
+    """Spearman correlation of each hook variable with one outcome of the channel's reels."""
+    get_y = OUTCOMES[outcome][0]
+    studied = [r for r in rows if r["status"] == "studied" and get_y(r) is not None]
     out = []
     for key, label, kind, direction, get in corpus._variables(studied):
-        pairs = [(float(v), 100 - r["skip_rate"]) for r, v in ((r, get(r)) for r in studied) if v is not None]
+        pairs = [(float(v), get_y(r)) for r, v in ((r, get(r)) for r in studied) if v is not None]
         if len(pairs) < MIN_REELS:
             continue
         xs, ys = [p[0] for p in pairs], [p[1] for p in pairs]
@@ -70,8 +102,8 @@ def hold_correlations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             with_v = [y for x, y in pairs if x >= 0.5]
             without = [y for x, y in pairs if x < 0.5]
             if with_v and without:
-                item["hold_with"] = round(stats.mean(with_v), 1)
-                item["hold_without"] = round(stats.mean(without), 1)
+                item[f"{outcome}_with"] = round(stats.mean(with_v), 2)
+                item[f"{outcome}_without"] = round(stats.mean(without), 2)
         out.append(item)
     qs = stats.benjamini_hochberg([e["p"] for e in out]) if out else []
     for e, q in zip(out, qs):
@@ -79,6 +111,11 @@ def hold_correlations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         e["diff"] = e["rho"]  # sign carrier for the evidence synthesis
         e["verdict"] = corpus._verdict(e)
     return sorted(out, key=lambda e: (e["q"], -abs(e["rho"])))
+
+
+def hold_correlations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Spearman correlation of each hook variable with the 3-second hold."""
+    return outcome_correlations(rows, "hold")
 
 
 def audience_report(store: MemoryStore, workspace: str) -> dict[str, Any]:
@@ -89,6 +126,10 @@ def audience_report(store: MemoryStore, workspace: str) -> dict[str, Any]:
     labeled = [r for r in studied if r["label"]]
     reach_effects = corpus.feature_effects(labeled)
     hold_effects = hold_correlations(rows)
+    views_effects = outcome_correlations(rows, "views")
+    engagement_effects = outcome_correlations(rows, "engagement")
+    saves_effects = outcome_correlations(rows, "saves")
+    engagement = [y for y in map(OUTCOMES["engagement"][0], rows) if y is not None]
 
     def brief(r: dict[str, Any]) -> dict[str, Any]:
         a = r["analysis"] or {}
@@ -112,6 +153,12 @@ def audience_report(store: MemoryStore, workspace: str) -> dict[str, Any]:
         "hold_synthesis": corpus.evidence_synthesis(hold_effects),
         "reach_effects": reach_effects,
         "reach_synthesis": corpus.evidence_synthesis(reach_effects),
+        # Public numbers: work without the skip rate (e.g. reels collected through Apify).
+        "views_effects": views_effects,
+        "views_synthesis": corpus.evidence_synthesis(views_effects),
+        "engagement_effects": engagement_effects,
+        "saves_effects": saves_effects,
+        "median_engagement": round(stats.median(engagement), 2) if engagement else None,
         "min_reels": MIN_REELS,
     }
 
@@ -129,8 +176,8 @@ def prompt_block(report: dict[str, Any] | None, limit: int = 6) -> str:
     """Findings about this audience for the evaluator's prompt."""
     if not report:
         return ""
-    lines = [f"### Аудит канала ({report['n_studied']} своих роликов, медианный skip rate "
-             f"{report['median_skip_rate']}%)"]
+    skip = f", медианный skip rate {report['median_skip_rate']}%" if report.get("median_skip_rate") is not None else ""
+    lines = [f"### Аудит канала ({report['n_studied']} своих роликов{skip})"]
     shown = 0
     for e in report["hold_effects"]:
         if e["verdict"] == "не подтверждено" or shown >= limit:
@@ -138,6 +185,14 @@ def prompt_block(report: dict[str, Any] | None, limit: int = 6) -> str:
         sign = "выше" if e["rho"] > 0 else "ниже"
         lines.append(f"- {e['label']}: удержание 3 с {sign} (ρ={e['rho']:+.2f}, q={e['q']}, n={e['n']}) — {e['verdict']}")
         shown += 1
+    for outcome, what in (("views", "просмотры"), ("engagement", "лайки и комментарии на просмотр"),
+                          ("saves", "сохранения на просмотр")):
+        for e in report.get(f"{outcome}_effects", []):
+            if e["verdict"] == "не подтверждено" or shown >= limit * 2:
+                continue
+            sign = "выше" if e["rho"] > 0 else "ниже"
+            lines.append(f"- {e['label']}: {what} {sign} (ρ={e['rho']:+.2f}, q={e['q']}, n={e['n']}) — {e['verdict']}")
+            shown += 1
     for e in report["reach_effects"]:
         if e["verdict"] == "не подтверждено" or shown >= limit * 2:
             continue

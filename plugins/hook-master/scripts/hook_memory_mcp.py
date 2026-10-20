@@ -22,7 +22,7 @@ from hookcore import audience, corpus, instagram, knowledge, learning, target, v
 from hookcore.memory import METRIC_FIELDS, MemoryStore  # noqa: E402
 
 SERVER_NAME = "hook-memory"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.3.0"
 SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 WORKSPACE = os.environ.get("HOOKBOT_WORKSPACE") or "local"
 
@@ -222,24 +222,26 @@ FRAMES_DIR = Path(os.environ.get("HOOKBOT_FRAMES_DIR") or Path(_db_path()).paren
 CORPUS = corpus.Corpus(STORE)
 
 
-def _ig() -> "instagram.InstagramGraph | None":
-    token, user = os.environ.get("IG_ACCESS_TOKEN", ""), os.environ.get("IG_USER_ID", "")
-    if not token or "${" in token:  # an unset userConfig value arrives as the literal placeholder
-        return None
-    return instagram.InstagramGraph(token, "" if "${" in user else user)
+def _ig() -> Any:
+    return instagram.from_env()  # Graph API token, else Apify; unset plugin options are ignored
 
 
 def tool_audit_collect(args: dict[str, Any]) -> dict[str, Any]:
     niche = STORE.get_profile(WORKSPACE)["niche"]
+    table = None
     if args.get("csv_path"):
-        records = instagram.import_insights_csv(args["csv_path"], workspace=WORKSPACE, niche=niche,
-                                                videos_dir=args.get("videos_dir"))
-    else:
-        ig = _ig()
-        if ig is None:
-            raise ValueError("Instagram не подключён (ig_access_token / ig_user_id в настройках плагина) — "
-                             "или передайте csv_path с выгрузкой статистики и videos_dir с роликами")
+        table = instagram.import_insights_csv(args["csv_path"], workspace=WORKSPACE, niche=niche,
+                                              videos_dir=args.get("videos_dir"))
+    ig, matched = _ig(), None
+    if ig is not None:
         records = instagram.own_records(ig, workspace=WORKSPACE, niche=niche, limit=int(args.get("limit", 100)))
+        if table:
+            matched = instagram.merge_own_stats(records, table)  # skip rate, saves and video files from the table
+    elif table is not None:
+        records = table
+    else:
+        raise ValueError("Instagram не подключён (ig_access_token, или apify_token и ig_username в настройках плагина) — "
+                         "или передайте csv_path с таблицей статистики и videos_dir с роликами")
     for rec in records:
         rec.workspace = WORKSPACE
         CORPUS.upsert(rec)
@@ -247,7 +249,8 @@ def tool_audit_collect(args: dict[str, Any]) -> dict[str, Any]:
     own = audience.own_reels(STORE, WORKSPACE)
     return {"collected": len(records), "own_reels": len(own),
             "to_study": sum(1 for r in own if r["status"] != "studied"),
-            "without_video": sum(1 for r in records if not (r.local_path or r.video_url or r.thumbnail_url))}
+            "without_video": sum(1 for r in records if not (r.local_path or r.video_url or r.thumbnail_url)),
+            "with_skip_rate": sum(1 for r in records if r.skip_rate is not None), "table_matched": matched}
 
 
 def _reel_frames(reel: dict[str, Any]) -> dict[str, Any]:
@@ -307,8 +310,11 @@ def tool_audit_report(args: dict[str, Any]) -> dict[str, Any]:
     keep = lambda effects: [e for e in effects if e["verdict"] != "не подтверждено"][:10]  # noqa: E731
     return {**{k: report[k] for k in ("n_reels", "n_studied", "n_with_skip_rate", "median_views", "median_skip_rate",
                                        "breakouts", "best_hold", "worst_hold", "min_reels")},
+            "median_engagement": report["median_engagement"],
             "hold_effects": keep(report["hold_effects"]), "reach_effects": keep(report["reach_effects"]),
-            "science": [s for s in report["hold_synthesis"] + report["reach_synthesis"]
+            "views_effects": keep(report["views_effects"]), "engagement_effects": keep(report["engagement_effects"]),
+            "saves_effects": keep(report["saves_effects"]),
+            "science": [s for s in report["hold_synthesis"] + report["views_synthesis"] + report["reach_synthesis"]
                         if s["status"] not in ("нет данных", "гипотеза")]}
 
 
@@ -317,7 +323,8 @@ def tool_audience_signals(args: dict[str, Any]) -> dict[str, Any]:
     if ig is not None:
         demographics = {"followers": ig.demographics("follower_demographics"),
                         "engaged": ig.demographics("engaged_audience_demographics", "this_month")}
-        own = [r for r in audience.own_reels(STORE, WORKSPACE) if str(r["external_id"]).isdigit()]
+        own = [r for r in audience.own_reels(STORE, WORKSPACE)
+               if r["source"] == "instagram_own" or str(r["external_id"]).isdigit()]
         for reel in sorted(own, key=lambda r: -(r["views"] or 0))[:5]:
             comments += ig.comments(reel["external_id"], 30)
     return target.channel_signals(STORE, WORKSPACE, demographics=demographics, comments=comments)
@@ -369,6 +376,14 @@ def tool_collect_audience(args: dict[str, Any]) -> dict[str, Any]:
     return {"collected": n, "labeled": labeled, "queued": len(CORPUS.queue(1000, niche=tag)), "errors": errors}
 
 
+def tool_search_accounts(args: dict[str, Any]) -> dict[str, Any]:
+    ig = _ig()
+    if ig is None or not hasattr(ig, "search_accounts"):
+        raise ValueError("Поиск аккаунтов в Instagram доступен через Apify (apify_token и ig_username); иначе ищите веб-поиском")
+    found = ig.search_accounts(args["query"], int(args.get("limit", 10)))
+    return {"accounts": [a for a in found if not a["is_private"]], "skipped_private": sum(a["is_private"] for a in found)}
+
+
 def tool_gap_report(args: dict[str, Any]) -> dict[str, Any]:
     tag = target.tag(WORKSPACE)
     report = corpus.build_report(CORPUS, tag)
@@ -383,8 +398,8 @@ def tool_gap_report(args: dict[str, Any]) -> dict[str, Any]:
 def tool_instagram_check(args: dict[str, Any]) -> dict[str, Any]:
     ig = _ig()
     if ig is None:
-        raise ValueError("Токен Instagram не задан: ig_access_token в настройках плагина (как получить — docs/INSTAGRAM_SETUP.md "
-                         "в репозитории плагина)")
+        raise ValueError("Instagram не подключён: ig_access_token, или apify_token и ig_username в настройках плагина "
+                         "(как получить — docs/INSTAGRAM_SETUP.md в репозитории плагина)")
     steps = instagram.check_connection(ig, discover_username=args.get("username"))
     return {"steps": steps, "ready": all(s["ok"] is not False for s in steps)}
 
@@ -601,6 +616,13 @@ TOOLS += [
         {"type": "object", "properties": {"usernames": {"type": "array", "items": {"type": "string"}}},
          "required": ["usernames"]},
         tool_verify_and_watch,
+    ),
+    (
+        "search_accounts",
+        "Найти аккаунты поиском самого Instagram (через Apify) по ключевому запросу аудитории; закрытые отбрасываются. "
+        "Найденных проверь и добавь через verify_and_watch.",
+        {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"]},
+        tool_search_accounts,
     ),
     (
         "collect_audience",

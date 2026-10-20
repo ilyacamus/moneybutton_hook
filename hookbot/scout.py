@@ -220,6 +220,7 @@ class Scout:
         workspace: str,
         *,
         records: list[corpus.ReelRecord] | None = None,
+        stats: list[corpus.ReelRecord] | None = None,
         limit: int = 100,
         max_study: int = 100,
         progress: Callable[[str], Awaitable[None]] | None = None,
@@ -227,14 +228,19 @@ class Scout:
         """Study every own reel, turn it into training data and report what holds this audience.
 
         ``records`` come from an insights export; without them the connected
-        Instagram account is read through the API.
+        Instagram account is read (Graph API or public data through Apify), and
+        ``stats`` — the creator's own table — adds what is private: skip rate,
+        saves, shares and the video files.
         """
         niche = self.store.get_profile(workspace)["niche"]
+        matched = None
         if records is None:
             if self.ig is None:
-                raise instagram.InstagramError("Instagram не подключён: задайте IG_ACCESS_TOKEN "
-                                               "или загрузите выгрузку статистики")
+                raise instagram.InstagramError("Instagram не подключён: задайте IG_ACCESS_TOKEN (или APIFY_TOKEN и "
+                                               "IG_USERNAME) либо загрузите выгрузку статистики")
             records = await asyncio.to_thread(instagram.own_records, self.ig, workspace=workspace, niche=niche, limit=limit)
+            if stats:
+                matched = instagram.merge_own_stats(records, stats)
         for rec in records:
             rec.workspace = workspace
             self.corpus.upsert(rec)
@@ -252,7 +258,7 @@ class Scout:
                 await progress(f"Разобрано {n} из {len(todo)}…")
         synced = self.sync_own_results()
         report = audience.audience_report(self.store, workspace)
-        report.update(collected=len(records), studied_now=done, failed_now=failed, synced=synced)
+        report.update(collected=len(records), studied_now=done, failed_now=failed, synced=synced, stats_matched=matched)
         audience.save_report(self.store, report)
         if len(self.store.training_rows(workspace)) >= 3:
             try:
@@ -270,6 +276,7 @@ class Scout:
         own_account: bool = True,
         study_budget: int = 40,
         media_per_creator: int = 25,
+        max_candidates: int = 15,
         progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         """Profile the channel's audience, find and verify creators serving it,
@@ -298,13 +305,23 @@ class Scout:
         known = [w["username"] for w in self.corpus.watchlist(workspace)]
         await say("Ищу авторов, которые делают контент для этой же аудитории…")
         search = await self.engine.discover_creators(profile, known)
+        candidates = [(c.username, c.segment, c.why, c.source_url) for c in search.candidates]
+        if self.ig is not None and hasattr(self.ig, "search_accounts"):
+            # Instagram's own search by the audience's keywords, next to the web search.
+            own = getattr(self.ig, "username", "")
+            seen = {c[0].lstrip("@").lower() for c in candidates} | set(known) | {own}
+            for keyword in profile.search_keywords[:3]:
+                for acc in await asyncio.to_thread(self.ig.search_accounts, keyword, 5):
+                    if acc["username"] not in seen and not acc["is_private"]:
+                        seen.add(acc["username"])
+                        candidates.append((acc["username"], "", f"поиск Instagram: «{keyword}»", ""))
         creators = []
         tag = target.tag(workspace)
-        for cand in search.candidates:
-            entry = {"username": cand.username.lstrip("@").lower(), "segment": cand.segment, "why": cand.why,
-                     "source_url": cand.source_url, "verified": None}
+        for username, segment, why, source_url in candidates[:max_candidates]:
+            entry = {"username": username.lstrip("@").lower(), "segment": segment, "why": why,
+                     "source_url": source_url, "verified": None}
             if self.ig is not None:
-                check = await asyncio.to_thread(instagram.verify_creator, self.ig, cand.username)
+                check = await asyncio.to_thread(instagram.verify_creator, self.ig, username, media_per_creator)
                 entry.update(verified=check["ok"], reason=check["reason"], followers=check.get("followers"),
                              median_views=check.get("median_views"))
                 if check["ok"]:

@@ -1,7 +1,7 @@
 {
   "name": "hook-master",
   "displayName": "HookMaster — оценщик хуков",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Самообучающийся оценщик хуков для Reels, TikTok и Shorts: оценка первых 3 секунд, генерация хуков по сценарию, переписывание, подбор звука, действия и текста. Учится на реальном skip rate автора.",
   "author": {
     "name": "MoneyButton"
@@ -27,7 +27,9 @@
       "env": {
         "HOOKBOT_DB": "${CLAUDE_PLUGIN_DATA}/hooks.db",
         "IG_ACCESS_TOKEN": "${user_config.ig_access_token}",
-        "IG_USER_ID": "${user_config.ig_user_id}"
+        "IG_USER_ID": "${user_config.ig_user_id}",
+        "APIFY_TOKEN": "${user_config.apify_token}",
+        "IG_USERNAME": "${user_config.ig_username}"
       }
     }
   },
@@ -42,6 +44,17 @@
       "type": "string",
       "title": "Instagram user id",
       "description": "Необязательно: ID Instagram-аккаунта в Graph API. Без него ID определяется по токену; нужен, только если к токену привязано несколько аккаунтов"
+    },
+    "apify_token": {
+      "type": "string",
+      "title": "Apify API token",
+      "description": "Если нет Facebook: публичные Reels ваши и других авторов через парсеры Apify (apify.com → Settings → API & Integrations)",
+      "sensitive": true
+    },
+    "ig_username": {
+      "type": "string",
+      "title": "Ваш Instagram (ник без @)",
+      "description": "Нужен вместе с apify_token: чей канал разбирать"
     }
   }
 }
