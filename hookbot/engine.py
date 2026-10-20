@@ -17,7 +17,8 @@ from .core import corpus, features, knowledge, learning, literature, validation
 from .core.learning import Calibration, LearningContext
 from .core.memory import MemoryStore
 from .core.video import Frame
-from .schemas import ActionPlan, Evaluation, Generation, HookVariant, LiteratureScan, Playbook, ReelAnalysis, Rewrite
+from .schemas import (ActionPlan, AudienceProfile, CreatorSearch, Evaluation, Generation, HookVariant,
+                      LiteratureScan, Playbook, ReelAnalysis, Rewrite)
 
 log = logging.getLogger(__name__)
 
@@ -459,3 +460,15 @@ class HookEngine:
         self.store.save_insight(literature.SCAN_WS, {"since": since, **scan.model_dump()}, n_results=len(scan.papers))
         return scan
 
+    # ------------------------------------------------------------------ #
+    # Target audience: who watches, and who else makes content for them
+    # ------------------------------------------------------------------ #
+
+    async def profile_audience(self, signals: dict[str, Any]) -> AudienceProfile:
+        payload = prompts.wrap("channel_data", json.dumps(signals, ensure_ascii=False, indent=1))
+        return await self._ask(AudienceProfile, self._neutral_content(prompts.AUDIENCE_TASK, payload))
+
+    async def discover_creators(self, profile: AudienceProfile, exclude: list[str]) -> CreatorSearch:
+        payload = (prompts.wrap("audience_profile", profile.model_dump_json(indent=1))
+                   + "\n\n" + prompts.wrap("known", ", ".join(exclude) or "—"))
+        return await self._ask(CreatorSearch, self._neutral_content(prompts.DISCOVER_TASK, payload), tools=[WEB_SEARCH_TOOL])

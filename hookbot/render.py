@@ -440,3 +440,63 @@ def render_audience(report: dict[str, Any] | None, f: type[Plain] = HTML) -> str
         lines += ["", f.b("Хуки, которые пролистывают")]
         lines += [f"{r['skip_rate']:.0f}% skip — «{f.esc((r['hook'] or '')[:90])}»" for r in report["worst_hold"]]
     return "\n".join(lines)
+
+
+def render_audience_profile(saved: dict[str, Any] | None, f: type[Plain] = HTML) -> str:
+    if not saved:
+        return "Профиля аудитории ещё нет. Сначала аудит (/audit или /myreel), затем /target."
+    p, creators = saved["profile"], saved.get("creators", [])
+    conf = {"low": "низкая", "medium": "средняя", "high": "высокая"}[p["confidence"]]
+    lines = [f.b("🎯 Целевая аудитория канала"), f.esc(p["summary"]), f.i(f"Уверенность: {conf}"), ""]
+    if p["demographics"]:
+        lines.append(f"👥 {f.esc(p['demographics'])}")
+    for seg in p["segments"]:
+        lines.append(f"• {f.b(seg['name'])} ({seg['weight']}): {f.esc(seg['description'])}")
+    for title, key in (("Интересы", "interests"), ("Боли", "pains"), ("Желания", "desires"),
+                       ("Что у них работает", "resonating_content")):
+        if p.get(key):
+            lines.append(f"{f.b(title + ':')} {f.esc('; '.join(p[key]))}")
+    lines.append(f"{f.b('Как говорят:')} {f.esc(p['language_style'])}")
+    if p.get("data_gaps"):
+        lines.append(f.i("Не хватает данных: " + "; ".join(p["data_gaps"])))
+    if creators:
+        ok = [c for c in creators if c.get("verified")]
+        bad = [c for c in creators if c.get("verified") is False]
+        unchecked = [c for c in creators if c.get("verified") is None]
+        lines += ["", f.b(f"🔭 Авторы для этой аудитории: проверено {len(ok)}, отклонено {len(bad)}, не проверено {len(unchecked)}")]
+        for c in ok[:12]:
+            followers = f", {c['followers']:,} подписчиков".replace(",", " ") if c.get("followers") else ""
+            lines.append(f"✅ @{f.esc(c['username'])}{followers} — {f.esc(c['segment'])}")
+        for c in unchecked[:8]:
+            lines.append(f"❔ @{f.esc(c['username'])} — {f.esc(c['segment'])} (нужна проверка через Instagram API)")
+    return "\n".join(lines)
+
+
+def render_gap(gap: dict[str, Any] | None, f: type[Plain] = HTML) -> str:
+    if not gap:
+        return "Сравнения с контентом для вашей аудитории ещё нет: запустите /target."
+    lines = [f.b("🧭 Ваш канал против залетевшего контента для вашей аудитории"),
+             f.i(f"{gap['n_creators']} авторов: {gap['n_viral']} залетевших и {gap['n_typical']} обычных роликов; "
+                 f"ваших роликов: {gap['n_own']}. Разбор вслепую, те же критерии хуков.")]
+    recs = gap.get("recommendations") or []
+    if recs:
+        lines += ["", f.b("Что делать (данные аудитории + ваш аудит + наука)")]
+        for r in recs[:8]:
+            unit = "%" if r["kind"] == "binary" else ""
+            lines.append(f"{'⬆️' if r['do'] == 'больше' else '⬇️'} {f.b(r['do'].capitalize() + ': ' + r['label'])}\n"
+                         f"   залетевшие {r['audience_viral']}{unit} · обычные {r['audience_typical']}{unit} · у вас {r['own']}{unit} "
+                         f"(q={r['audience_q']})\n   {f.esc(r['own_audit'])}"
+                         + (f"; {f.esc(r['literature'])}" if r.get("literature") else ""))
+    else:
+        lines += ["", f.i("Подтверждённых разрывов пока нет: нужно больше изученных роликов этой аудитории.")]
+    big = [g for g in gap.get("gaps", []) if g["verdict"] != "нет разрыва"][:6]
+    if big:
+        lines += ["", f.b("Чем ваши ролики отличаются от залетевших у вашей аудитории")]
+        for g in big:
+            unit = "%" if g["kind"] == "binary" else ""
+            lines.append(f"• {f.esc(g['label'])}: залетевшие {g['audience_viral']}{unit}, у вас {g['own']}{unit} — {g['verdict']}")
+    if gap.get("exemplars"):
+        lines += ["", f.b("Залетевшие хуки для вашей аудитории")]
+        for ex in gap["exemplars"][:5]:
+            lines.append(f"🔥 {ex['outlier_score']:.1f}× — «{f.esc(ex['hook'][:100])}» {f.esc(ex['url'])}")
+    return "\n".join(lines)

@@ -188,12 +188,14 @@ class Corpus:
                 changed += 1
         return changed
 
-    def queue(self, limit: int) -> list[dict[str, Any]]:
+    def queue(self, limit: int, niche: str | None = None) -> list[dict[str, Any]]:
         """Next reels to study: viral ones, each followed by a matched control
         from the same creator (closest publish time), then other labeled reels."""
-        new = [self._row(r) for r in self.conn.execute(
-            "SELECT * FROM reels WHERE status = 'new' AND label IS NOT NULL"
-        ).fetchall()]
+        sql, params = "SELECT * FROM reels WHERE status = 'new' AND label IS NOT NULL", []
+        if niche:
+            sql += " AND niche = ?"
+            params.append(niche)
+        new = [self._row(r) for r in self.conn.execute(sql + " ORDER BY id", params).fetchall()]
         studied_controls = {
             r["creator"] for r in self.conn.execute(
                 "SELECT creator FROM reels WHERE status = 'studied' AND label IN ('typical', 'flop')"

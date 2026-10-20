@@ -94,7 +94,7 @@ class FakeMessages:
     async def create(self, **params: Any) -> SimpleNamespace:
         self.client.calls.append(params)
         name = params["output_config"]["format"]["schema"]["title"]
-        payload = self.client.overrides.get(name, CANNED[name])
+        payload = self.client.overrides.get(name, CANNED.get(name))
         if self.client.responder is not None:
             payload = self.client.responder(name, params) or payload
         stop_reason = self.client.stop_reason

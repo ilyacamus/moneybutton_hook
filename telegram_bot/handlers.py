@@ -19,7 +19,7 @@ from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 from aiogram.utils.chat_action import ChatActionSender
 
 from hookbot import render
-from hookbot.core import audience, corpus, instagram, learning, literature, validation, video
+from hookbot.core import audience, corpus, instagram, learning, literature, target, validation, video
 from hookbot.core.memory import METRIC_FIELDS
 from hookbot.engine import EngineError, HookEngine, HookInput
 
@@ -511,6 +511,40 @@ async def cmd_audit(message: Message, bot: Bot, **data: Any) -> None:
         await ctx.send(render.render_audience(report))
 
     asyncio.create_task(run())
+
+
+@router.message(Command("target"))
+async def cmd_target(message: Message, bot: Bot, **data: Any) -> None:
+    ctx = ctx_for(message, bot, **data)
+    scout = ctx.scout
+    if not (ctx.unlimited and scout is not None):
+        await message.answer(texts.TARGET_HOWTO)
+        return
+    await message.answer("🎯 Определяю целевую аудиторию канала, ищу авторов с той же аудиторией и разбираю их ролики. "
+                         "Это займёт несколько минут.")
+
+    async def progress(text: str) -> None:
+        await ctx.send(text)
+
+    async def run() -> None:
+        try:
+            result = await scout.target_audience(ctx.workspace, own_account=scout.ig is not None, progress=progress)
+        except (instagram.InstagramError, EngineError) as exc:
+            await ctx.send(f"😕 Не получилось: {html.escape(str(exc))}")
+            return
+        await ctx.send(render.render_audience_profile(target.latest_profile(ctx.storage.memory, ctx.workspace)))
+        await ctx.send(render.render_gap(result["gap"]))
+
+    asyncio.create_task(run())
+
+
+@router.message(Command("gap"))
+async def cmd_gap(message: Message, botdb: BotStorage, **_: Any) -> None:
+    ws = workspace_of(message.from_user.id)
+    for text in (render.render_audience_profile(target.latest_profile(botdb.memory, ws)),
+                 render.render_gap(target.latest_gap(botdb.memory, ws))):
+        for chunk in split_message(text):
+            await message.answer(chunk, disable_web_page_preview=True)
 
 
 @router.message(Command("myreel"))

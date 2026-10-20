@@ -23,7 +23,7 @@ from typing import Any, Sequence
 
 from datetime import datetime, timezone
 
-from . import audience, corpus, knowledge, literature, stats
+from . import audience, corpus, knowledge, literature, stats, target
 from .memory import MemoryStore
 
 MIN_RESULTS = 5
@@ -262,6 +262,7 @@ class LearningContext:
     corpus_niche: str | None = None
     literature: str = ""
     audience: str = ""
+    target: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -326,6 +327,8 @@ class LearningContext:
 
         if self.audience:
             lines += ["", self.audience]
+        if self.target:
+            lines += ["", self.target]
 
         if self.science:
             where = f"ниша «{self.corpus_niche}»" if self.corpus_niche else "все ниши"
@@ -365,6 +368,7 @@ def build_context(store: MemoryStore, workspace: str) -> LearningContext:
         corpus_niche=niche,
         literature=literature.prompt_block(store),
         audience=audience.prompt_block(audience.latest_report(store, workspace)),
+        target=target.prompt_block(target.latest_gap(store, workspace)),
         workspace=workspace,
         profile=profile,
         calibration=calibrate(store, workspace),

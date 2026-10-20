@@ -109,6 +109,42 @@ class InstagramGraph:
             return out
 
 
+    def demographics(self, metric: str = "follower_demographics", timeframe: str | None = None) -> dict[str, dict[str, float]]:
+        """Audience breakdowns by age, gender, city and country, as shares in percent.
+
+        ``follower_demographics`` describes followers; ``engaged_audience_demographics``
+        describes the accounts that interacted with the content. Needs ≥100 followers.
+        """
+        out: dict[str, dict[str, float]] = {}
+        for breakdown in ("age", "gender", "city", "country"):
+            params = {"metric": metric, "period": "lifetime", "metric_type": "total_value", "breakdown": breakdown}
+            if timeframe:
+                params["timeframe"] = timeframe
+            try:
+                payload = self._get(f"{self.user_id}/insights", params)
+            except InstagramError:
+                continue
+            counts: dict[str, float] = {}
+            for item in payload.get("data", []):
+                for b in (item.get("total_value") or {}).get("breakdowns", []):
+                    for r in b.get("results", []):
+                        key = " / ".join(r.get("dimension_values") or [])
+                        counts[key] = counts.get(key, 0) + float(r.get("value") or 0)
+            total = sum(counts.values())
+            if total:
+                top = sorted(counts.items(), key=lambda kv: -kv[1])[:10]
+                out[breakdown] = {k: round(100 * v / total, 1) for k, v in top}
+        return out
+
+    def comments(self, media_id: str, limit: int = 50) -> list[str]:
+        """Top-level comment texts of an own media (newest first)."""
+        try:
+            payload = self._get(f"{media_id}/comments", {"fields": "text,like_count,timestamp", "limit": min(limit, 50)})
+        except InstagramError:
+            return []
+        return [c["text"] for c in payload.get("data", []) if c.get("text")]
+
+
 def _parse_insights(payload: dict[str, Any]) -> dict[str, float]:
     out = {}
     for item in payload.get("data", []):
@@ -138,6 +174,23 @@ def records_from_discovery(profile: dict[str, Any], media: list[dict[str, Any]],
         )
         for m in media if _is_reel(m)
     ]
+
+
+def verify_creator(ig: InstagramGraph, username: str, limit: int = 12) -> dict[str, Any]:
+    """Does this account exist, is it a business/creator account, and does it post reels?"""
+    try:
+        profile, media = ig.discover(username, limit=limit)
+    except InstagramError as exc:
+        return {"username": username.lstrip("@").lower(), "ok": False, "reason": str(exc)}
+    reels = [m for m in media if _is_reel(m)]
+    return {
+        "username": profile.get("username") or username.lstrip("@").lower(),
+        "ok": bool(reels),
+        "reason": "" if reels else "нет Reels",
+        "followers": profile.get("followers_count"),
+        "reels_sampled": len(reels),
+        "median_views": sorted(m.get("view_count") or 0 for m in reels)[len(reels) // 2] if reels else None,
+    }
 
 
 def own_records(ig: InstagramGraph, *, workspace: str, niche: str = "", limit: int = 25) -> list[ReelRecord]:

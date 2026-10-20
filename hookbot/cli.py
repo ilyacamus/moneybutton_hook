@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import render
-from .core import audience, corpus, instagram, learning, literature, validation, video
+from .core import audience, corpus, instagram, learning, literature, target, validation, video
 from .core.memory import METRIC_FIELDS, MemoryStore
 from .engine import EngineError, HookEngine, HookInput
 from .scout import Scout, ScoutConfig
@@ -64,6 +64,10 @@ async def run(args: argparse.Namespace) -> int:
     if args.command == "audience":
         print(render.render_audience(audience.latest_report(store, ws), f))
         return 0
+    if args.command == "gap":
+        print(render.render_audience_profile(target.latest_profile(store, ws), f))
+        print("\n" + render.render_gap(target.latest_gap(store, ws), f))
+        return 0
     if args.command == "validate":
         print(render.render_validation(validation.report(store, ws), f))
         return 0
@@ -114,6 +118,16 @@ async def run(args: argparse.Namespace) -> int:
 
         report = await scout.audit(ws, records=records, limit=args.limit, max_study=args.max_study, progress=progress)
         print(render.render_audience(report, f))
+        return 0
+    if args.command == "target":
+        scout = Scout(store, engine, ig=instagram.InstagramGraph.from_env(), config=ScoutConfig.from_env())
+
+        async def say(text: str) -> None:
+            print(text)
+
+        result = await scout.target_audience(ws, study_budget=args.budget, progress=say)
+        print(render.render_audience_profile(target.latest_profile(store, ws), f))
+        print("\n" + render.render_gap(result["gap"], f))
         return 0
     if args.command == "ref":
         scout = Scout(store, engine, config=ScoutConfig.from_env())
@@ -207,6 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=100, help="сколько последних роликов взять через API")
     sp.add_argument("--max-study", type=int, default=100, help="сколько роликов разобрать за запуск (каждый — запрос к Claude)")
     sub.add_parser("audience", help="последний аудит канала")
+
+    sp = sub.add_parser("target", help="целевая аудитория канала → авторы для неё → сравнение хуков")
+    sp.add_argument("--budget", type=int, default=40, help="сколько чужих роликов разобрать (каждый — запрос к Claude)")
+    sub.add_parser("gap", help="последний профиль аудитории и сравнение с её залетевшим контентом")
 
     sp = sub.add_parser("scout", help="робот-разведчик: собирает Reels, находит залетевшие, учится")
     sp.add_argument("action", choices=("once", "run", "watch", "unwatch", "list", "import"))

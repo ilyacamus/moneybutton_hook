@@ -171,3 +171,38 @@ class Paper(BaseModel):
 class LiteratureScan(BaseModel):
     summary: str = Field(description="Что нового в науке о внимании и удержании за период")
     papers: list[Paper]
+
+
+class AudienceSegment(BaseModel):
+    name: str = Field(description="Короткое название сегмента, например «мамы в декрете 25–34»")
+    description: str
+    weight: Literal["основной", "заметный", "небольшой"]
+    evidence: str = Field(description="На каких данных основан вывод: демография, комментарии, какие ролики")
+
+
+class AudienceProfile(BaseModel):
+    summary: str = Field(description="Кто целевая аудитория канала, в 2–3 предложениях")
+    demographics: str = Field(description="Что известно о возрасте, поле, географии; «нет данных», если их нет")
+    segments: list[AudienceSegment] = Field(description="1–3 сегмента")
+    interests: list[str]
+    pains: list[str] = Field(description="Проблемы и страхи аудитории, как они звучат в её словах")
+    desires: list[str]
+    language_style: str = Field(description="Как аудитория говорит: лексика, тон, обращение")
+    resonating_content: list[str] = Field(description="Темы и форматы, которые у этой аудитории работают лучше всего по данным канала")
+    search_keywords: list[str] = Field(description="Ключевые запросы для поиска похожего контента и авторов (на языке аудитории и на английском)")
+    hashtags: list[str]
+    creator_types: list[str] = Field(description="Какие авторы ещё обслуживают эту аудиторию")
+    confidence: Literal["low", "medium", "high"]
+    data_gaps: list[str] = Field(description="Каких данных не хватает для уверенного вывода")
+
+
+class CreatorCandidate(BaseModel):
+    username: str = Field(description="Имя аккаунта Instagram без @, ровно как в найденном источнике")
+    segment: str = Field(description="Какому сегменту аудитории соответствует")
+    why: str = Field(description="Почему у этого автора та же аудитория")
+    source_url: str = Field(description="URL из результатов поиска, где упоминается аккаунт")
+
+
+class CreatorSearch(BaseModel):
+    candidates: list[CreatorCandidate]
+    queries_used: list[str]

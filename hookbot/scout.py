@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .core import audience, corpus, features, instagram, knowledge, learning, literature, video
+from .core import audience, corpus, features, instagram, knowledge, learning, literature, target, video
 from .core.corpus import Corpus
 from .core.memory import MemoryStore, now_iso
 from .core.video import Frame
@@ -285,6 +285,91 @@ class Scout:
                 log.warning("Playbook update failed: %s", exc)
         return report
 
+    # target audience: who else makes content for the same people ----------
+
+    async def target_audience(
+        self,
+        workspace: str,
+        *,
+        own_account: bool = True,
+        study_budget: int = 40,
+        media_per_creator: int = 25,
+        progress: Callable[[str], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        """Profile the channel's audience, find and verify creators serving it,
+        study their viral and typical reels, and compare with the channel."""
+
+        async def say(text: str) -> None:
+            if progress:
+                await progress(text)
+
+        demographics, comments = {}, []
+        if self.ig is not None and own_account:
+            demographics = {
+                "followers": await asyncio.to_thread(self.ig.demographics, "follower_demographics"),
+                "engaged": await asyncio.to_thread(self.ig.demographics, "engaged_audience_demographics", "this_month"),
+            }
+            # Reels from the API, or from an export whose post id is the Instagram media id.
+            with_id = (r for r in audience.own_reels(self.store, workspace)
+                       if r["source"] == "instagram_own" or str(r["external_id"]).isdigit())
+            top = sorted(with_id, key=lambda r: -(r["views"] or 0))[:5]
+            for reel in top:
+                comments += await asyncio.to_thread(self.ig.comments, reel["external_id"], 30)
+        signals = target.channel_signals(self.store, workspace, demographics=demographics, comments=comments)
+        await say("Определяю целевую аудиторию по данным канала…")
+        profile = await self.engine.profile_audience(signals)
+
+        known = [w["username"] for w in self.corpus.watchlist(workspace)]
+        await say("Ищу авторов, которые делают контент для этой же аудитории…")
+        search = await self.engine.discover_creators(profile, known)
+        creators = []
+        tag = target.tag(workspace)
+        for cand in search.candidates:
+            entry = {"username": cand.username.lstrip("@").lower(), "segment": cand.segment, "why": cand.why,
+                     "source_url": cand.source_url, "verified": None}
+            if self.ig is not None:
+                check = await asyncio.to_thread(instagram.verify_creator, self.ig, cand.username)
+                entry.update(verified=check["ok"], reason=check["reason"], followers=check.get("followers"),
+                             median_views=check.get("median_views"))
+                if check["ok"]:
+                    self.corpus.watch(workspace, entry["username"], niche=tag)
+            creators.append(entry)
+        target.save_profile(self.store, workspace, profile.model_dump(), creators)
+        verified = [c for c in creators if c["verified"]]
+        if self.ig is None:
+            await say("Instagram не подключён: кандидаты найдены, но не проверены и не собраны.")
+            return {"profile": profile.model_dump(), "creators": creators, "studied": 0, "gap": None}
+
+        await say(f"Проверено через Instagram: {len(verified)} из {len(creators)}. Собираю их Reels…")
+        summary = CycleSummary()
+        for entry in self.corpus.watchlist(workspace):
+            if entry["niche"] != tag:
+                continue
+            try:
+                profile_ig, media = await asyncio.to_thread(self.ig.discover, entry["username"], media_per_creator)
+            except instagram.InstagramError as exc:
+                summary.errors.append(f"@{entry['username']}: {exc}")
+                continue
+            for rec in instagram.records_from_discovery(profile_ig, media, niche=tag):
+                self.corpus.upsert(rec)
+        self.corpus.label_all()
+        studied = 0
+        queue = self.corpus.queue(study_budget, niche=tag)
+        await say(f"Разбираю вслепую {len(queue)} роликов: залетевшие и обычные у тех же авторов…")
+        for reel in queue:
+            try:
+                await self.study_one(reel)
+                studied += 1
+            except (EngineError, video.VideoError, instagram.InstagramError) as exc:
+                self.corpus.mark_failed(reel["id"], str(exc))
+        report = corpus.build_report(self.corpus, tag)
+        if report["effects"]:
+            corpus.save_report(self.store, report)
+        gap = target.gap_report(self.store, workspace)
+        target.save_gap(self.store, gap)
+        return {"profile": profile.model_dump(), "creators": creators, "studied": studied, "gap": gap,
+                "errors": summary.errors}
+
     # 5. learn ---------------------------------------------------------------
 
     def learn(self, summary: CycleSummary) -> None:
@@ -296,6 +381,8 @@ class Scout:
             corpus.save_report(self.store, report)
             summary.reports.append(niche)
             summary.alerts += self._alerts(niche, previous["content"] if previous else None, report)
+            if niche.startswith(target.TAG_PREFIX):  # keep each creator's audience comparison fresh
+                target.save_gap(self.store, target.gap_report(self.store, niche[len(target.TAG_PREFIX):]))
 
     @staticmethod
     def _alerts(niche: str, before: dict | None, after: dict) -> list[str]:
