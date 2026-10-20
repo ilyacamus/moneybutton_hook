@@ -1,16 +1,19 @@
 """Self-learning: fit the rubric to real 3-second hold rates.
 
-Three layers, from cheapest to most expressive:
+The model is hierarchical (empirical Bayes, Efron & Morris, 1975):
 
-1. ``Calibration`` — ridge regression from the 9 rubric scores to the observed
-   3-second hold (100 − skip rate). It is shrunk toward the prior rubric
-   weights, so with few results it behaves like the expert rubric and with
-   many results it follows the account's real data. It yields a predicted hold
-   for new hooks and re-weights the 0–100 score.
+    expert rubric  →  weights learned on the viral corpus  →  this account
+
+1. ``Calibration`` — ridge regression (Hoerl & Kennard, 1970) from the 9 rubric
+   scores to the observed 3-second hold (100 − skip rate), shrunk toward the
+   prior weights (the corpus weights when the corpus is large enough, else the
+   expert rubric). Recent results weigh more, because audiences and trends
+   drift. It yields a predicted hold for new hooks and re-weights the score.
 2. ``trigger_lift`` — which psychological triggers actually raise hold for
    this account.
-3. Best/worst hook examples and the latest LLM-written playbook, injected into
-   prompts as few-shot context (see ``LearningContext.to_prompt``).
+3. Best/worst hook examples, the latest playbook, what the viral corpus has
+   confirmed scientifically and similar viral reels, injected into prompts
+   (see ``LearningContext.to_prompt``).
 """
 
 from __future__ import annotations
@@ -18,34 +21,17 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Sequence
 
-from . import knowledge
+from datetime import datetime, timezone
+
+from . import corpus, knowledge, literature, stats
 from .memory import MemoryStore
 
 MIN_RESULTS = 5
 PRIOR_STRENGTH = 8.0  # the prior is worth this many observations
 MAX_CV_FOLDS = 10
+ACCOUNT_HALF_LIFE_DAYS = 180.0  # an account's result this old counts half
 # Hooks the user brought in themselves (vs. variants we suggested) — the ones worth asking results for.
 SCORED_SOURCES = ("evaluated", "video")
-
-
-def _solve(a: list[list[float]], b: list[float]) -> list[float]:
-    """Solve ``a @ x = b`` with Gaussian elimination and partial pivoting."""
-    n = len(b)
-    m = [row[:] + [b[i]] for i, row in enumerate(a)]
-    for col in range(n):
-        pivot = max(range(col, n), key=lambda r: abs(m[r][col]))
-        if abs(m[pivot][col]) < 1e-12:
-            raise ValueError("Singular matrix")
-        m[col], m[pivot] = m[pivot], m[col]
-        for r in range(col + 1, n):
-            factor = m[r][col] / m[col][col]
-            if factor:
-                for c in range(col, n + 1):
-                    m[r][c] -= factor * m[col][c]
-    x = [0.0] * n
-    for r in range(n - 1, -1, -1):
-        x[r] = (m[r][n] - sum(m[r][c] * x[c] for c in range(r + 1, n))) / m[r][r]
-    return x
 
 
 def _vector(criteria: dict[str, Any], ids: Sequence[str], fill: dict[str, float]) -> list[float]:
@@ -53,27 +39,30 @@ def _vector(criteria: dict[str, Any], ids: Sequence[str], fill: dict[str, float]
 
 
 def _fit_core(
-    xs: list[list[float]], ys: list[float], prior: list[float]
+    xs: list[list[float]], ys: list[float], prior: list[float], ws: list[float] | None = None
 ) -> tuple[list[float], float, list[float]]:
-    """Ridge regression shrunk toward ``slope * prior``. Returns (means, y_mean, coef)."""
+    """Weighted ridge regression shrunk toward ``slope * prior``. Returns (means, y_mean, coef)."""
     n, d = len(xs), len(prior)
-    means = [sum(x[j] for x in xs) / n for j in range(d)]
-    y_mean = sum(ys) / n
+    ws = ws or [1.0] * n
+    total = sum(ws)
+    means = [sum(w * x[j] for w, x in zip(ws, xs)) / total for j in range(d)]
+    y_mean = sum(w * y for w, y in zip(ws, ys)) / total
     xc = [[x[j] - means[j] for j in range(d)] for x in xs]
     yc = [y - y_mean for y in ys]
 
     # How much hold does one point of the *prior* composite score buy?
     composite = [sum(p * v for p, v in zip(prior, row)) for row in xc]
-    denom = sum(z * z for z in composite)
-    slope = max(0.0, sum(z * y for z, y in zip(composite, yc)) / denom) if denom > 1e-9 else 0.0
+    denom = sum(w * z * z for w, z in zip(ws, composite))
+    slope = max(0.0, sum(w * z * y for w, z, y in zip(ws, composite, yc)) / denom) if denom > 1e-9 else 0.0
     target = [slope * p for p in prior]
 
-    variances = [sum(row[j] ** 2 for row in xc) / n for j in range(d)]
+    variances = [sum(w * row[j] ** 2 for w, row in zip(ws, xc)) / total for j in range(d)]
     lam = PRIOR_STRENGTH * max(sum(variances) / d, 1e-3)
 
-    a = [[sum(row[i] * row[j] for row in xc) + (lam if i == j else 0.0) for j in range(d)] for i in range(d)]
-    b = [sum(row[i] * y for row, y in zip(xc, yc)) + lam * target[i] for i in range(d)]
-    return means, y_mean, _solve(a, b)
+    a = [[sum(w * row[i] * row[j] for w, row in zip(ws, xc)) + (lam if i == j else 0.0) for j in range(d)]
+         for i in range(d)]
+    b = [sum(w * row[i] * y for w, row, y in zip(ws, xc, yc)) + lam * target[i] for i in range(d)]
+    return means, y_mean, stats.solve(a, b)
 
 
 def _predict(means: list[float], y_mean: float, coef: list[float], x: list[float]) -> float:
@@ -86,6 +75,7 @@ class Calibration:
     scope: str  # "prior" | "workspace" | "global"
     n: int
     weights: dict[str, float]
+    prior_source: str = "expert"  # "expert" | "corpus"
     means: dict[str, float] | None = None
     y_mean: float | None = None
     coef: dict[str, float] | None = None
@@ -123,25 +113,50 @@ class Calibration:
         return asdict(self)
 
 
-def prior_calibration(n: int = 0) -> Calibration:
-    return Calibration(scope="prior", n=n, weights=knowledge.prior_weights())
+def prior_calibration(n: int = 0, prior_weights: dict[str, float] | None = None) -> Calibration:
+    return Calibration(
+        scope="prior",
+        n=n,
+        weights=prior_weights or knowledge.prior_weights(),
+        prior_source="corpus" if prior_weights else "expert",
+    )
 
 
-def fit_calibration(rows: list[dict[str, Any]], scope: str = "workspace") -> Calibration:
+def _recency(row: dict[str, Any], now: datetime, half_life_days: float) -> float:
+    stamp = row.get("result_at") or row.get("created_at")
+    try:
+        when = datetime.fromisoformat(stamp) if stamp else now
+    except ValueError:
+        when = now
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return stats.recency_weight((now - when).total_seconds() / 86400, half_life_days)
+
+
+def fit_calibration(
+    rows: list[dict[str, Any]],
+    scope: str = "workspace",
+    *,
+    prior_weights: dict[str, float] | None = None,
+    half_life_days: float = ACCOUNT_HALF_LIFE_DAYS,
+    now: datetime | None = None,
+) -> Calibration:
     """Fit the calibration on rows from ``MemoryStore.training_rows``."""
     rows = [r for r in rows if r.get("criteria") and r.get("hold_3s") is not None]
     if len(rows) < MIN_RESULTS:
-        return prior_calibration(n=len(rows))
+        return prior_calibration(n=len(rows), prior_weights=prior_weights)
 
+    now = now or datetime.now(timezone.utc)
     ids = knowledge.criterion_ids()
-    prior_w = knowledge.prior_weights()
+    prior_w = prior_weights or knowledge.prior_weights()
     prior = [prior_w[c] for c in ids]
     neutral = {c: 5.0 for c in ids}
     xs = [_vector(r["criteria"], ids, neutral) for r in rows]
     ys = [float(r["hold_3s"]) for r in rows]
+    ws = [_recency(r, now, half_life_days) for r in rows]
     n = len(rows)
 
-    means, y_mean, coef = _fit_core(xs, ys, prior)
+    means, y_mean, coef = _fit_core(xs, ys, prior, ws)
 
     # k-fold cross-validated mean absolute error (leave-one-out for small n)
     folds = min(n, MAX_CV_FOLDS)
@@ -151,7 +166,7 @@ def fit_calibration(rows: list[dict[str, Any]], scope: str = "workspace") -> Cal
         test = [i for i in range(n) if i % folds == k]
         if len(train) < 2:
             continue
-        m, ym, c = _fit_core([xs[i] for i in train], [ys[i] for i in train], prior)
+        m, ym, c = _fit_core([xs[i] for i in train], [ys[i] for i in train], prior, [ws[i] for i in train])
         errors += [abs(ys[i] - _predict(m, ym, c, xs[i])) for i in test]
     mae = round(sum(errors) / len(errors), 1) if errors else None
 
@@ -170,6 +185,7 @@ def fit_calibration(rows: list[dict[str, Any]], scope: str = "workspace") -> Cal
         scope=scope,
         n=n,
         weights=weights,
+        prior_source="corpus" if prior_weights else "expert",
         means={c: round(v, 3) for c, v in zip(ids, means)},
         y_mean=round(y_mean, 3),
         coef={c: round(v, 4) for c, v in zip(ids, coef)},
@@ -178,15 +194,18 @@ def fit_calibration(rows: list[dict[str, Any]], scope: str = "workspace") -> Cal
 
 
 def calibrate(store: MemoryStore, workspace: str) -> Calibration:
-    """Workspace model when it has enough data, else the shared global model, else the prior."""
+    """Workspace model when it has enough data, else the shared global model,
+    else the prior (corpus-learned weights for the niche, or the expert rubric)."""
+    niche = store.get_profile(workspace)["niche"]
+    prior_weights = corpus.prior_weights(store, niche)
     own = store.training_rows(workspace)
     own_scored = [r for r in own if r["criteria"]]
     if len(own_scored) >= MIN_RESULTS:
-        return fit_calibration(own_scored, scope="workspace")
+        return fit_calibration(own_scored, scope="workspace", prior_weights=prior_weights)
     shared = [r for r in store.training_rows(None, shared_only=True) if r["criteria"]]
     if len(shared) >= MIN_RESULTS:
-        return fit_calibration(shared, scope="global")
-    return prior_calibration(n=len(own))
+        return fit_calibration(shared, scope="global", prior_weights=prior_weights)
+    return prior_calibration(n=len(own), prior_weights=prior_weights)
 
 
 def trigger_lift(rows: list[dict[str, Any]], min_n: int = 2) -> list[dict[str, Any]]:
@@ -238,6 +257,10 @@ class LearningContext:
     worst: list[dict[str, Any]] = field(default_factory=list)
     playbook: dict[str, Any] | None = None
     pending: list[dict[str, Any]] = field(default_factory=list)
+    science: list[dict[str, Any]] = field(default_factory=list)
+    trends: dict[str, Any] | None = None
+    corpus_niche: str | None = None
+    literature: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -300,8 +323,27 @@ class LearningContext:
             for rule in self.playbook.get("do_less", []):
                 lines.append(f"- ❌ {rule.get('rule', rule)}")
 
+        if self.science:
+            where = f"ниша «{self.corpus_niche}»" if self.corpus_niche else "все ниши"
+            lines += ["", f"### Что показал корпус залетевших роликов ({where}, сравнение с обычными роликами тех же авторов)"]
+            for item in self.science:
+                diff = f", разница {item['diff']:+}" if item.get("diff") is not None else ""
+                q = f", q={item['q']}" if item.get("q") is not None else ""
+                lines.append(f"- `{item['id']}` ({item['name']}): {item['status']} [литература {item['literature_level']}{diff}{q}]")
+        if self.trends and (self.trends.get("rising") or self.trends.get("shifts")):
+            lines += ["", f"### Что изменилось за последние {self.trends['window_days']:.0f} дней"]
+            for item in self.trends.get("rising", [])[:4]:
+                lines.append(f"- Чаще у залетевших: {item['label']} ({item['share_before']}% → {item['share_now']}%)")
+            for item in self.trends.get("fading", [])[:3]:
+                lines.append(f"- Реже у залетевших: {item['label']} ({item['share_before']}% → {item['share_now']}%)")
+            for item in self.trends.get("shifts", [])[:3]:
+                lines.append(f"- Сместился эффект: {item['label']} (δ {item['delta_before']:+} → {item['delta_now']:+})")
+
+        if self.literature:
+            lines += ["", self.literature]
+
         if self.n_results == 0 and not self.playbook:
-            lines += ["", "Данных пока нет — опирайся на базу знаний и рубрику."]
+            lines += ["", "Данных аккаунта пока нет — опирайся на базу знаний, рубрику и корпус."]
         return "\n".join(lines)
 
 
@@ -309,9 +351,17 @@ def build_context(store: MemoryStore, workspace: str) -> LearningContext:
     rows = store.training_rows(workspace)
     best, worst = select_examples(rows)
     insight = store.latest_insight(workspace)
+    profile = store.get_profile(workspace)
+    niche = corpus.match_niche(store, profile["niche"])
+    report = corpus.latest_report(store, niche)
+    science = [s for s in (report or {}).get("synthesis", []) if s["status"] not in ("нет данных", "гипотеза")][:8]
     return LearningContext(
+        science=science,
+        trends=(report or {}).get("trends"),
+        corpus_niche=niche,
+        literature=literature.prompt_block(store),
         workspace=workspace,
-        profile=store.get_profile(workspace),
+        profile=profile,
         calibration=calibrate(store, workspace),
         n_results=len(rows),
         lifts=trigger_lift(rows),

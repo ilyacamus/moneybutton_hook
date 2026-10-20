@@ -61,6 +61,23 @@ CANNED: dict[str, dict[str, Any]] = {
             {"window": "1.5–3.0 с", "visual": "экран кабинета", "audio": "голос", "on_screen_text": "3 ошибки"},
         ],
     },
+    "ReelAnalysis": {
+        "spoken_hook": "Я потратил 47 000 ₽ на таргет", "spoken_source": "caption",
+        "on_screen_text": "−47 000 ₽", "visual": "Автор бросает чеки в камеру", "format": "talking_head",
+        "face_first_second": True, "text_first_second": True, "motion_first_second": True,
+        "scores": {cid: {"score": 7, "reason": "ок"} for cid in knowledge.criterion_ids()},
+        "trigger_ids": ["specificity", "face_emotion"], "anti_pattern_ids": [], "formula_id": "did_it_for_you",
+        "hypothesis": "Цифра и движение в первую секунду",
+    },
+    "LiteratureScan": {
+        "summary": "Новая работа о склейках",
+        "papers": [{
+            "title": "The dynamic effects of visual complexity and scene cuts on viewer attention",
+            "authors": "Wals et al.", "year": 2026, "venue": "JAMS", "link": "https://doi.org/10.1007/s11747-025-01137-x",
+            "study_type": "observational", "peer_reviewed": True, "sample": "2 520 просмотров",
+            "finding": "Склейки повышают синхронность внимания", "trigger_ids": ["motion_first"], "evidence_level": "B",
+        }],
+    },
     "Playbook": {
         "summary": "Аудитория держится на цифрах",
         "do_more": [{"rule": "Ставь сумму в первый кадр", "evidence": "+12 п.п.", "confidence": "medium"}],
@@ -78,8 +95,11 @@ class FakeMessages:
         self.client.calls.append(params)
         name = params["output_config"]["format"]["schema"]["title"]
         payload = self.client.overrides.get(name, CANNED[name])
+        stop_reason = self.client.stop_reason
+        if self.client.pause_first and len(self.client.calls) == 1:
+            stop_reason, payload = "pause_turn", {}
         return SimpleNamespace(
-            stop_reason=self.client.stop_reason,
+            stop_reason=stop_reason,
             usage=SimpleNamespace(input_tokens=100, output_tokens=200, cache_read_input_tokens=0),
             content=[SimpleNamespace(type="text", text=json.dumps(payload, ensure_ascii=False))],
         )
@@ -90,4 +110,5 @@ class FakeClient:
         self.calls: list[dict[str, Any]] = []
         self.overrides: dict[str, Any] = {}
         self.stop_reason = "end_turn"
+        self.pause_first = False
         self.beta = SimpleNamespace(messages=FakeMessages(self))

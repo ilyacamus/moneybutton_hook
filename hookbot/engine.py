@@ -13,17 +13,19 @@ import anthropic
 import pydantic
 
 from . import prompts
-from .core import knowledge, learning
+from .core import corpus, features, knowledge, learning, literature, validation
 from .core.learning import Calibration, LearningContext
 from .core.memory import MemoryStore
-from .schemas import ActionPlan, Evaluation, Generation, HookVariant, Playbook, Rewrite
 from .core.video import Frame
+from .schemas import ActionPlan, Evaluation, Generation, HookVariant, LiteratureScan, Playbook, ReelAnalysis, Rewrite
 
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_EFFORT = "medium"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 10}
+MAX_CONTINUATIONS = 4
 
 T = TypeVar("T", bound=pydantic.BaseModel)
 
@@ -71,6 +73,7 @@ class EvaluationReport:
     calibration: Calibration
     video_facts: dict[str, Any] | None = None
     improved_ids: list[int] = field(default_factory=list)
+    benchmark: dict[str, Any] | None = None
 
 
 @dataclass
@@ -127,26 +130,40 @@ class HookEngine:
         self.fallbacks = fallbacks
         self.max_tokens = max_tokens
         self.reflect_every = reflect_every
+        self.last_usage: Any = None
 
     # ------------------------------------------------------------------ #
     # Claude call
     # ------------------------------------------------------------------ #
 
-    async def _ask(self, schema: type[T], content: list[dict[str, Any]]) -> T:
+    async def _ask(self, schema: type[T], content: list[dict[str, Any]], *, tools: list[dict] | None = None) -> T:
+        messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+        for _ in range(MAX_CONTINUATIONS + 1):
+            response = await self._create(schema, messages, tools)
+            if response.stop_reason != "pause_turn":
+                break
+            # A long server-tool turn (e.g. web search) paused: send it back to let it continue.
+            messages = [*messages, {"role": "assistant", "content": [
+                b.model_dump() if hasattr(b, "model_dump") else b for b in response.content]}]
+        return self._parse(schema, response)
+
+    async def _create(self, schema: type[T], messages: list[dict[str, Any]], tools: list[dict] | None):
         params: dict[str, Any] = dict(
             model=self.model,
             max_tokens=self.max_tokens,
             system=[{"type": "text", "text": prompts.SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": content}],
+            messages=messages,
             output_config={
                 "effort": self.effort,
                 "format": {"type": "json_schema", "schema": anthropic.transform_schema(schema)},
             },
         )
+        if tools:
+            params["tools"] = tools
         if self.fallbacks:
             params.update(betas=[FALLBACK_BETA], fallbacks="default")
         try:
-            response = await self.client.beta.messages.create(**params)
+            return await self.client.beta.messages.create(**params)
         except anthropic.RateLimitError as exc:
             raise EngineError("Сервис перегружен, попробуйте через минуту.") from exc
         except anthropic.APIStatusError as exc:
@@ -160,7 +177,9 @@ class HookEngine:
                 raise
             raise EngineError("Не настроен доступ к Claude API: задайте ANTHROPIC_API_KEY.") from exc
 
+    def _parse(self, schema: type[T], response: Any) -> T:
         usage = response.usage
+        self.last_usage = usage
         log.info(
             "claude %s stop=%s in=%s cache_read=%s out=%s",
             schema.__name__, response.stop_reason, usage.input_tokens,
@@ -186,6 +205,14 @@ class HookEngine:
         text = "\n\n".join(
             [ctx.to_prompt(), task, prompts.language_line(ctx.profile.get("language", "ru")), payload]
         )
+        return self._blocks(text, images)
+
+    def _neutral_content(self, task: str, payload: str, images: list[Frame] = ()) -> list[dict]:
+        """Without any account's learning context: for corpus and literature work."""
+        return self._blocks("\n\n".join([task, prompts.language_line("ru"), payload]), images)
+
+    @staticmethod
+    def _blocks(text: str, images: list[Frame] = ()) -> list[dict]:
         content: list[dict[str, Any]] = []
         for frame in images:
             content.append({"type": "text", "text": f"Кадр на {frame.t:.1f} с:"})
@@ -234,6 +261,7 @@ class HookEngine:
         *,
         frames: list[Frame] = (),
         video_facts: str = "",
+        facts: dict[str, Any] | None = None,
         source: str = "evaluated",
         save: bool = True,
     ) -> EvaluationReport:
@@ -250,6 +278,9 @@ class HookEngine:
         score = calibration.score(criteria)
         predicted = calibration.predict_hold(criteria)
 
+        objective = features.extract(" ".join(filter(None, [hook.text, hook.on_screen_text])), facts)
+        bench = corpus.benchmark(self.store, niche, features=objective, criteria=criteria)
+
         hook_id = None
         improved_ids: list[int] = []
         if save:
@@ -264,7 +295,7 @@ class HookEngine:
                 criteria=criteria,
                 score=score,
                 predicted_hold=predicted,
-                meta={"anti_patterns": evaluation.anti_pattern_ids, "video": bool(frames)},
+                meta={"anti_patterns": evaluation.anti_pattern_ids, "video": bool(frames), "features": objective},
             )
             improved_ids = self._store_variants(workspace, evaluation.improved, "improved", niche, hook_id)
         return EvaluationReport(
@@ -276,6 +307,7 @@ class HookEngine:
             calibration=calibration,
             video_facts={"text": video_facts} if video_facts else None,
             improved_ids=improved_ids,
+            benchmark=bench,
         )
 
     async def generate(self, workspace: str, script: str, *, count: int = 8, niche: str = "") -> VariantsReport:
@@ -384,3 +416,46 @@ class HookEngine:
         playbook = await self._ask(Playbook, self._content(workspace, prompts.REFLECT_TASK, payload))
         self.store.save_insight(workspace, playbook.model_dump(), n_results=len(rows))
         return playbook
+
+    # ------------------------------------------------------------------ #
+    # Science: blind corpus analysis, rater reliability, fresh literature
+    # ------------------------------------------------------------------ #
+
+    async def study_reel(
+        self, frames: list[Frame], *, facts_text: str = "", caption: str = "", transcript: str = ""
+    ) -> ReelAnalysis:
+        """Blind analysis of someone's published reel: the model never sees views or labels."""
+        parts = []
+        if facts_text:
+            parts.append(prompts.wrap("video_facts", facts_text))
+        if caption:
+            parts.append(prompts.wrap("caption", caption[:1500]))
+        if transcript:
+            parts.append(prompts.wrap("transcript", transcript[:1000]))
+        payload = "\n\n".join(parts) or "Подписи и расшифровки нет — только кадры."
+        return await self._ask(ReelAnalysis, self._neutral_content(prompts.STUDY_TASK, payload, frames))
+
+    async def reliability_study(self, workspace: str, hook_ids: list[int], raters: int = 3) -> dict[str, Any]:
+        """Score the same hooks ``raters`` times independently and measure agreement (ICC)."""
+        ratings = []
+        for hook_id in hook_ids:
+            hook = self.store.get_hook(hook_id, workspace)
+            if hook is None:
+                continue
+            item = HookInput(text=hook["text"], on_screen_text=hook["on_screen_text"], visual=hook["visual"],
+                             niche=hook["niche"])
+            runs = [await self.evaluate(workspace, item, save=False) for _ in range(raters)]
+            ratings.append([r.criteria for r in runs])
+        if len(ratings) < 2:
+            raise EngineError("Для проверки надёжности нужно хотя бы 2 хука.")
+        result = validation.reliability(ratings)
+        validation.save_reliability(self.store, result)
+        return result
+
+    async def scan_literature(self, since: str) -> LiteratureScan:
+        """Search the web for fresh studies on attention in the first seconds of video."""
+        task = prompts.LITERATURE_TASK.format(since=since)
+        scan = await self._ask(LiteratureScan, self._neutral_content(task, ""), tools=[WEB_SEARCH_TOOL])
+        self.store.save_insight(literature.SCAN_WS, {"since": since, **scan.model_dump()}, n_results=len(scan.papers))
+        return scan
+

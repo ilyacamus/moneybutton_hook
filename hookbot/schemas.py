@@ -130,3 +130,44 @@ class Playbook(BaseModel):
     do_more: list[PlaybookRule]
     do_less: list[PlaybookRule]
     experiments: list[str] = Field(description="2–4 A/B-теста хуков для следующих роликов")
+
+
+ReelFormat = Literal["talking_head", "voiceover_broll", "tutorial", "skit", "pov", "before_after", "product",
+                     "vlog", "text_on_screen", "other"]
+
+
+class ReelAnalysis(BaseModel):
+    """Blind analysis of a published reel's first 3 seconds (the model never sees its views)."""
+
+    spoken_hook: str = Field(description="Что говорится в первые 3 секунды: из расшифровки, подписи или текста на экране; пусто, если неизвестно")
+    spoken_source: Literal["transcript", "caption", "on_screen", "unknown"]
+    on_screen_text: str = Field(description="Текст на экране в первых кадрах дословно, пусто если нет")
+    visual: str = Field(description="Что происходит в кадре с 0.0 до 3.0 секунды")
+    format: ReelFormat
+    face_first_second: bool = Field(description="Есть ли лицо крупно в первую секунду")
+    text_first_second: bool = Field(description="Есть ли текст на экране в первую секунду")
+    motion_first_second: bool = Field(description="Есть ли заметное движение в первую секунду")
+    scores: CriteriaScores  # type: ignore[valid-type]
+    trigger_ids: list[TriggerId]
+    anti_pattern_ids: list[AntiPatternId]
+    formula_id: FormulaId
+    hypothesis: str = Field(description="Гипотеза: чем этот хук может удерживать или терять зрителя, со ссылкой на приёмы из базы знаний")
+
+
+class Paper(BaseModel):
+    title: str
+    authors: str
+    year: int
+    venue: str = Field(description="Журнал или конференция; для препринта — arXiv/SSRN")
+    link: str = Field(description="DOI (https://doi.org/...) или URL страницы, найденной в поиске")
+    study_type: Literal["field_experiment", "lab_experiment", "observational", "meta_analysis", "review", "preprint"]
+    peer_reviewed: bool
+    sample: str = Field(description="Объём и тип данных: сколько людей/видео/экспериментов")
+    finding: str = Field(description="Главный результат одним-двумя предложениями, с цифрами из источника")
+    trigger_ids: list[TriggerId] = Field(description="К каким приёмам базы знаний относится")
+    evidence_level: Literal["A", "B", "C", "D"]
+
+
+class LiteratureScan(BaseModel):
+    summary: str = Field(description="Что нового в науке о внимании и удержании за период")
+    papers: list[Paper]

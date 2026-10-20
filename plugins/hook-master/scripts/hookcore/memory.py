@@ -70,6 +70,50 @@ CREATE TABLE IF NOT EXISTS insights (
     content     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS insights_workspace ON insights(workspace, id);
+
+-- Reference corpus: other creators' (and the user's own) published reels.
+CREATE TABLE IF NOT EXISTS reels (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL,
+    external_id     TEXT NOT NULL,
+    workspace       TEXT NOT NULL DEFAULT '',
+    url             TEXT NOT NULL DEFAULT '',
+    creator         TEXT NOT NULL DEFAULT '',
+    niche           TEXT NOT NULL DEFAULT '',
+    caption         TEXT NOT NULL DEFAULT '',
+    published_at    TEXT,
+    collected_at    TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    views           INTEGER,
+    likes           INTEGER,
+    comments        INTEGER,
+    shares          INTEGER,
+    saves           INTEGER,
+    skip_rate       REAL,
+    followers       INTEGER,
+    baseline_views  REAL,
+    outlier_score   REAL,
+    label           TEXT,
+    video_url       TEXT NOT NULL DEFAULT '',
+    thumbnail_url   TEXT NOT NULL DEFAULT '',
+    local_path      TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'new',
+    analysis        TEXT,
+    features        TEXT,
+    error           TEXT,
+    UNIQUE(source, external_id)
+);
+CREATE INDEX IF NOT EXISTS reels_creator ON reels(creator);
+CREATE INDEX IF NOT EXISTS reels_status ON reels(status, label);
+
+CREATE TABLE IF NOT EXISTS watchlist (
+    workspace   TEXT NOT NULL,
+    platform    TEXT NOT NULL,
+    username    TEXT NOT NULL,
+    niche       TEXT NOT NULL DEFAULT '',
+    added_at    TEXT NOT NULL,
+    PRIMARY KEY (workspace, platform, username)
+);
 """
 
 PERCENT_FIELDS = ("skip_rate", "hold_3s")

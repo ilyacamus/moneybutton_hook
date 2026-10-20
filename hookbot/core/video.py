@@ -99,9 +99,11 @@ def _first_sound(path: str, window: float) -> float | None:
     ends = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", log)]
     if not starts or starts[0] > 0.05:
         return 0.0
-    if not ends:
+    # ffmpeg also reports a silence_end when the clipped window ends while still
+    # silent; that is not the start of a sound.
+    if not ends or ends[0] >= window - 0.05:
         return None
-    return round(min(ends[0], window), 2)
+    return round(ends[0], 2)
 
 
 def _cuts(path: str, window: float, threshold: float = 0.3) -> list[float]:

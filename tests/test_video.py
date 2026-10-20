@@ -42,3 +42,14 @@ def test_probe_rejects_garbage(tmp_path):
     bad.write_bytes(b"not a video")
     with pytest.raises(video.VideoError):
         video.probe(str(bad))
+
+
+def test_silent_audio_track_is_not_reported_as_late_sound(tmp_path):
+    # Found on real footage: a silent audio track must read as "no sound", not "sound at 3.0 s".
+    path = tmp_path / "silent.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=160x284:d=4",
+                    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "4", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)], check=True)
+    probe = video.probe(str(path))
+    assert probe.has_audio and probe.first_sound_at is None
+    assert "звук не обнаружен" in probe.facts_text()
