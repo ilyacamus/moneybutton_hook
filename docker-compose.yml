@@ -1,0 +1,9 @@
+services:
+  bot:
+    build: .
+    env_file: .env
+    environment:
+      HOOKBOT_DB: /data/hookbot.db
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

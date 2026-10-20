@@ -1,0 +1,16 @@
+{
+  "name": "moneybutton",
+  "owner": {
+    "name": "MoneyButton"
+  },
+  "description": "Инструменты MoneyButton для авторов коротких видео",
+  "plugins": [
+    {
+      "name": "hook-master",
+      "source": "./plugins/hook-master",
+      "description": "Самообучающийся оценщик хуков для Reels, TikTok и Shorts",
+      "category": "marketing",
+      "tags": ["reels", "hooks", "retention"]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "hook-master",
+  "displayName": "HookMaster — оценщик хуков",
+  "version": "0.1.0",
+  "description": "Самообучающийся оценщик хуков для Reels, TikTok и Shorts: оценка первых 3 секунд, генерация хуков по сценарию, переписывание, подбор звука, действия и текста. Учится на реальном skip rate автора.",
+  "author": {
+    "name": "MoneyButton"
+  },
+  "repository": "https://github.com/ilyacamus/moneybutton_hook",
+  "license": "UNLICENSED",
+  "keywords": ["reels", "instagram", "tiktok", "shorts", "hooks", "retention", "skip-rate", "copywriting"],
+  "mcpServers": {
+    "hook-memory": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/hook_memory_mcp.py"],
+      "env": {
+        "HOOKBOT_DB": "${CLAUDE_PLUGIN_DATA}/hooks.db"
+      }
+    }
+  }
+}

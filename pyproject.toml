@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moneybutton-hook"
+version = "0.1.0"
+description = "Self-learning evaluator of short-video hooks: Claude plugin, Telegram bot and CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=1.15,<2",
+    "pydantic>=2.7,<3",
+]
+
+[project.optional-dependencies]
+bot = ["aiogram>=3.31,<4"]
+dev = ["aiogram>=3.31,<4", "pytest>=8", "pytest-asyncio>=0.24"]
+
+[project.scripts]
+hookbot = "hookbot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hookbot*", "telegram_bot*"]
+
+[tool.setuptools.package-data]
+"hookbot.core" = ["data/*.json", "data/*.md"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
