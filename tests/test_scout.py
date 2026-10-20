@@ -1,7 +1,6 @@
 import json
 import subprocess
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -9,7 +8,7 @@ from hookbot.core import instagram, literature, video
 from hookbot.core.corpus import Corpus
 from hookbot.core.instagram import InstagramError, InstagramGraph
 from hookbot.engine import HookEngine
-from hookbot.scout import Scout, ScoutConfig
+from hookbot.scout import CycleSummary, Scout, ScoutConfig
 
 
 @pytest.fixture(scope="module")
@@ -113,7 +112,7 @@ async def test_own_reels_become_training_data(store, client, clip):
     engine = HookEngine(store, client)
     scout = Scout(store, engine, ig=InstagramGraph("t", "1", getter=FakeGraph(clip)),
                   config=ScoutConfig(study_per_cycle=10, literature_every_days=0, own_workspace="tg:1"))
-    await scout.collect(summary := __import__("hookbot.scout", fromlist=["CycleSummary"]).CycleSummary())
+    await scout.collect(CycleSummary())
     own = Corpus(store).find("instagram_own", "own1")
     assert own["skip_rate"] == 37.5 and own["views"] == 1500
     Corpus(store).set_label(own["id"], "typical", 1.0)

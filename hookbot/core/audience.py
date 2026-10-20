@@ -147,3 +147,36 @@ def prompt_block(report: dict[str, Any] | None, limit: int = 6) -> str:
         lines.append(f"- Значимых закономерностей пока нет (нужно ≥{MIN_REELS} роликов; чем больше, тем точнее).")
     return "\n".join(lines)
 
+
+def sync_own_results(store: MemoryStore) -> int:
+    """Own studied reels with a skip rate become hooks with results (training data).
+
+    Idempotent: the created hook id is remembered in the reel's analysis.
+    """
+    from . import learning  # local import: learning imports this module
+
+    c = Corpus(store)
+    rows = store.conn.execute(
+        f"SELECT id FROM reels WHERE source IN ({', '.join('?' * len(OWN_SOURCES))}) "
+        "AND status = 'studied' AND skip_rate IS NOT NULL",
+        OWN_SOURCES,
+    ).fetchall()
+    n = 0
+    for (reel_id,) in rows:
+        reel = c.get(reel_id)
+        data = reel["analysis"]
+        if not reel["workspace"] or data.get("hook_id"):
+            continue
+        text = data.get("spoken_hook") or data.get("on_screen_text") or reel["caption"][:120] or f"Reel {reel['external_id']}"
+        analysis = learning.analyze(store, reel["workspace"], data["criteria"])
+        hook_id = store.add_hook(
+            reel["workspace"], text, source="own_reel", on_screen_text=data.get("on_screen_text", ""),
+            visual=data.get("visual", ""), niche=reel["niche"], triggers=data.get("trigger_ids", []),
+            criteria=data["criteria"], score=analysis["score"], meta={"reel_id": reel_id, "url": reel["url"]},
+        )
+        metrics = {k: reel[k] for k in ("skip_rate", "views", "shares", "saves", "likes", "comments") if reel[k] is not None}
+        store.add_result(hook_id, reel["workspace"], notes="auto: Instagram insights", **metrics)
+        data["hook_id"] = hook_id
+        c.save_analysis(reel_id, data, reel["features"] or {})
+        n += 1
+    return n

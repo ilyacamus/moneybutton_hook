@@ -40,7 +40,8 @@ def test_skill_frontmatter_and_references(skill):
 
 def test_all_skills_present():
     names = {p.parent.name for p in (PLUGIN / "skills").glob("*/SKILL.md")}
-    assert names == {"hook-score", "hook-generate", "hook-rewrite", "hook-actions", "hook-result", "hook-learn"}
+    assert names == {"hook-score", "hook-generate", "hook-rewrite", "hook-actions", "hook-result", "hook-learn",
+                     "hook-audit", "hook-target"}
 
 
 class MCP:

@@ -18,11 +18,11 @@ from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from hookcore import knowledge, learning  # noqa: E402
+from hookcore import audience, corpus, instagram, knowledge, learning, target, validation, video  # noqa: E402
 from hookcore.memory import METRIC_FIELDS, MemoryStore  # noqa: E402
 
 SERVER_NAME = "hook-memory"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 WORKSPACE = os.environ.get("HOOKBOT_WORKSPACE") or "local"
 
@@ -213,6 +213,199 @@ def tool_list_hooks(args: dict[str, Any]) -> dict[str, Any]:
     return {"hooks": [{k: h[k] for k in keep} for h in hooks]}
 
 
+# --------------------------------------------------------------------------- #
+# Channel audit, target audience and blind reel study
+# --------------------------------------------------------------------------- #
+
+FACTS: dict[int, dict[str, Any]] = {}  # reel id -> measured video facts, kept between next_reels and save
+FRAMES_DIR = Path(os.environ.get("HOOKBOT_FRAMES_DIR") or Path(_db_path()).parent / "frames")
+CORPUS = corpus.Corpus(STORE)
+
+
+def _ig() -> "instagram.InstagramGraph | None":
+    token, user = os.environ.get("IG_ACCESS_TOKEN", ""), os.environ.get("IG_USER_ID", "")
+    if not token or not user or "${" in token or "${" in user:
+        return None
+    return instagram.InstagramGraph(token, user)
+
+
+def tool_audit_collect(args: dict[str, Any]) -> dict[str, Any]:
+    niche = STORE.get_profile(WORKSPACE)["niche"]
+    if args.get("csv_path"):
+        records = instagram.import_insights_csv(args["csv_path"], workspace=WORKSPACE, niche=niche,
+                                                videos_dir=args.get("videos_dir"))
+    else:
+        ig = _ig()
+        if ig is None:
+            raise ValueError("Instagram не подключён (ig_access_token / ig_user_id в настройках плагина) — "
+                             "или передайте csv_path с выгрузкой статистики и videos_dir с роликами")
+        records = instagram.own_records(ig, workspace=WORKSPACE, niche=niche, limit=int(args.get("limit", 100)))
+    for rec in records:
+        rec.workspace = WORKSPACE
+        CORPUS.upsert(rec)
+    CORPUS.label_all()
+    own = audience.own_reels(STORE, WORKSPACE)
+    return {"collected": len(records), "own_reels": len(own),
+            "to_study": sum(1 for r in own if r["status"] != "studied"),
+            "without_video": sum(1 for r in records if not (r.local_path or r.video_url or r.thumbnail_url))}
+
+
+def _reel_frames(reel: dict[str, Any]) -> dict[str, Any]:
+    folder = FRAMES_DIR / f"reel_{reel['id']}"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = reel["local_path"] if reel["local_path"] and Path(reel["local_path"]).exists() else None
+    if path is None and reel["video_url"]:
+        path = str(instagram.download(reel["video_url"], folder / "reel.mp4"))
+    if path:
+        probe = video.probe(path)
+        FACTS[reel["id"]] = probe.facts()
+        frames = []
+        for frame in probe.frames:
+            out = folder / f"frame_{frame.t:.1f}s.jpg"
+            out.write_bytes(frame.jpeg)
+            frames.append(str(out))
+        return {"frames": frames, "video_facts": probe.facts_text()}
+    if reel["thumbnail_url"]:
+        thumb = instagram.download(reel["thumbnail_url"], folder / "cover.jpg", max_bytes=5 * 1024 * 1024)
+        return {"frames": [str(thumb)], "video_facts": "Доступна только обложка: видео скачать нельзя."}
+    raise video.VideoError("Нет ни видео, ни обложки")
+
+
+def tool_next_reels(args: dict[str, Any]) -> dict[str, Any]:
+    scope, limit = args.get("scope", "own"), int(args.get("limit", 5))
+    if scope == "own":
+        queue = [r for r in audience.own_reels(STORE, WORKSPACE) if r["status"] in ("new", "failed")][:limit]
+    else:
+        queue = CORPUS.queue(limit, niche=target.tag(WORKSPACE) if scope == "audience" else None)
+    out, errors = [], []
+    for reel in queue:
+        try:
+            media = _reel_frames(reel)
+        except (video.VideoError, instagram.InstagramError) as exc:
+            CORPUS.mark_failed(reel["id"], str(exc))
+            errors.append({"reel_id": reel["id"], "error": str(exc)})
+            continue
+        # Blind: no views, no skip rate, no label — only what a viewer sees.
+        out.append({"reel_id": reel["id"], "caption": (reel["caption"] or "")[:1500], **media})
+    return {"reels": out, "errors": errors,
+            "instruction": "Посмотри кадры (Read), оцени хук вслепую по рубрике и вызови save_reel_analysis для каждого ролика."}
+
+
+def tool_save_reel_analysis(args: dict[str, Any]) -> dict[str, Any]:
+    reel_id = int(args["reel_id"])
+    if CORPUS.get(reel_id) is None:
+        raise ValueError(f"Ролик {reel_id} не найден")
+    data = {k: v for k, v in args.items() if k != "reel_id"}
+    feats = corpus.store_analysis(CORPUS, reel_id, data, FACTS.pop(reel_id, None))
+    synced = audience.sync_own_results(STORE)
+    return {"reel_id": reel_id, "features": feats, "own_results_synced": synced}
+
+
+def tool_audit_report(args: dict[str, Any]) -> dict[str, Any]:
+    report = audience.audience_report(STORE, WORKSPACE)
+    audience.save_report(STORE, report)
+    keep = lambda effects: [e for e in effects if e["verdict"] != "не подтверждено"][:10]  # noqa: E731
+    return {**{k: report[k] for k in ("n_reels", "n_studied", "n_with_skip_rate", "median_views", "median_skip_rate",
+                                       "breakouts", "best_hold", "worst_hold", "min_reels")},
+            "hold_effects": keep(report["hold_effects"]), "reach_effects": keep(report["reach_effects"]),
+            "science": [s for s in report["hold_synthesis"] + report["reach_synthesis"]
+                        if s["status"] not in ("нет данных", "гипотеза")]}
+
+
+def tool_audience_signals(args: dict[str, Any]) -> dict[str, Any]:
+    ig, demographics, comments = _ig(), {}, []
+    if ig is not None:
+        demographics = {"followers": ig.demographics("follower_demographics"),
+                        "engaged": ig.demographics("engaged_audience_demographics", "this_month")}
+        own = [r for r in audience.own_reels(STORE, WORKSPACE) if str(r["external_id"]).isdigit()]
+        for reel in sorted(own, key=lambda r: -(r["views"] or 0))[:5]:
+            comments += ig.comments(reel["external_id"], 30)
+    return target.channel_signals(STORE, WORKSPACE, demographics=demographics, comments=comments)
+
+
+def tool_save_audience_profile(args: dict[str, Any]) -> dict[str, Any]:
+    target.save_profile(STORE, WORKSPACE, args["profile"], args.get("creators", []))
+    return {"saved": True}
+
+
+def tool_verify_and_watch(args: dict[str, Any]) -> dict[str, Any]:
+    ig = _ig()
+    results = []
+    for username in args["usernames"]:
+        if ig is None:
+            results.append({"username": username, "verified": None, "reason": "Instagram не подключён"})
+            continue
+        check = instagram.verify_creator(ig, username)
+        if check["ok"]:
+            CORPUS.watch(WORKSPACE, check["username"], niche=target.tag(WORKSPACE))
+        results.append({**check, "verified": check["ok"]})
+    saved = target.latest_profile(STORE, WORKSPACE)
+    if saved:
+        handle = lambda name: str(name).lstrip("@").lower()  # noqa: E731
+        known = {handle(c["username"]): c for c in saved.get("creators", []) if c.get("username")}
+        for r in results:
+            known[handle(r["username"])] = {**known.get(handle(r["username"]), {}), **r}
+        target.save_profile(STORE, WORKSPACE, saved["profile"], list(known.values()))
+    return {"results": results}
+
+
+def tool_collect_audience(args: dict[str, Any]) -> dict[str, Any]:
+    ig = _ig()
+    if ig is None:
+        raise ValueError("Instagram не подключён")
+    tag, n, errors = target.tag(WORKSPACE), 0, []
+    for entry in CORPUS.watchlist(WORKSPACE):
+        if entry["niche"] != tag:
+            continue
+        try:
+            profile, media = ig.discover(entry["username"], int(args.get("per_creator", 25)))
+        except instagram.InstagramError as exc:
+            errors.append(f"@{entry['username']}: {exc}")
+            continue
+        for rec in instagram.records_from_discovery(profile, media, niche=tag):
+            CORPUS.upsert(rec)
+            n += 1
+    labeled = CORPUS.label_all()
+    return {"collected": n, "labeled": labeled, "queued": len(CORPUS.queue(1000, niche=tag)), "errors": errors}
+
+
+def tool_gap_report(args: dict[str, Any]) -> dict[str, Any]:
+    tag = target.tag(WORKSPACE)
+    report = corpus.build_report(CORPUS, tag)
+    if report["effects"]:
+        corpus.save_report(STORE, report)
+    gap = target.gap_report(STORE, WORKSPACE)
+    target.save_gap(STORE, gap)
+    return {k: gap[k] for k in ("n_creators", "n_viral", "n_typical", "n_own", "recommendations", "exemplars")} | {
+        "gaps": [g for g in gap["gaps"] if g["verdict"] != "нет разрыва"][:10]}
+
+
+def tool_validation(args: dict[str, Any]) -> dict[str, Any]:
+    return validation.report(STORE, WORKSPACE)
+
+
+REEL_ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reel_id": {"type": "integer"},
+        "spoken_hook": {"type": "string", "description": "Что говорится в первые 3 с (из подписи/текста/кадров), пусто если неизвестно"},
+        "spoken_source": {"type": "string", "enum": ["transcript", "caption", "on_screen", "unknown"]},
+        "on_screen_text": {"type": "string", "description": "Текст на экране в первых кадрах дословно"},
+        "visual": {"type": "string"},
+        "format": {"type": "string"},
+        "face_first_second": {"type": "boolean"},
+        "text_first_second": {"type": "boolean"},
+        "motion_first_second": {"type": "boolean"},
+        "criteria": CRITERIA_SCHEMA,
+        "trigger_ids": TRIGGERS_SCHEMA,
+        "anti_pattern_ids": ANTI_PATTERNS_SCHEMA,
+        "formula_id": {"type": "string"},
+        "hypothesis": {"type": "string"},
+    },
+    "required": ["reel_id", "visual", "face_first_second", "text_first_second", "motion_first_second", "criteria", "trigger_ids"],
+}
+
+
 Tool = tuple[str, str, dict[str, Any], Callable[[dict[str, Any]], dict[str, Any]]]
 
 TOOLS: list[Tool] = [
@@ -337,6 +530,81 @@ TOOLS: list[Tool] = [
         tool_list_hooks,
     ),
 ]
+TOOLS += [
+    (
+        "audit_collect",
+        "Аудит канала, шаг 1: забрать свои Reels со статистикой (skip rate, просмотры) через Instagram API "
+        "или из выгрузки CSV (csv_path) с папкой видео (videos_dir).",
+        {"type": "object", "properties": {"csv_path": {"type": "string"}, "videos_dir": {"type": "string"},
+                                          "limit": {"type": "integer"}}},
+        tool_audit_collect,
+    ),
+    (
+        "next_reels",
+        "Следующие ролики для слепого разбора: кадры первых 3 с (пути к JPEG), измеренные факты о звуке и склейках, "
+        "подпись. Без просмотров и меток — оценивай вслепую. scope: own — свои ролики, audience — авторы вашей "
+        "аудитории, corpus — все отслеживаемые.",
+        {"type": "object", "properties": {"scope": {"type": "string", "enum": ["own", "audience", "corpus"]},
+                                          "limit": {"type": "integer"}}},
+        tool_next_reels,
+    ),
+    (
+        "save_reel_analysis",
+        "Сохранить слепой разбор ролика: хук, текст на экране, визуал, лицо/текст/движение в первую секунду, "
+        "оценки рубрики, триггеры. Свои ролики со skip rate автоматически становятся обучающими данными.",
+        REEL_ANALYSIS_SCHEMA,
+        tool_save_reel_analysis,
+    ),
+    (
+        "audit_report",
+        "Аудит канала, итог: что связано с удержанием первых 3 секунд у вашей аудитории (корреляции с поправкой "
+        "на множественные проверки), что отличает прорывные ролики, сверка с научными данными.",
+        {"type": "object", "properties": {}},
+        tool_audit_report,
+    ),
+    (
+        "audience_signals",
+        "Данные для определения целевой аудитории: демография подписчиков и вовлечённых (если подключён Instagram), "
+        "комментарии, лучшие и худшие хуки, выводы аудита.",
+        {"type": "object", "properties": {}},
+        tool_audience_signals,
+    ),
+    (
+        "save_audience_profile",
+        "Сохранить профиль целевой аудитории (summary, segments, interests, pains, desires, language_style, "
+        "search_keywords, confidence, data_gaps) и, если есть, кандидатов-авторов.",
+        {"type": "object", "properties": {"profile": {"type": "object"}, "creators": {"type": "array", "items": {"type": "object"}}},
+         "required": ["profile"]},
+        tool_save_audience_profile,
+    ),
+    (
+        "verify_and_watch",
+        "Проверить через Instagram API, что аккаунты существуют, бизнес/авторские и публикуют Reels; подходящие "
+        "добавить в отслеживаемые для вашей аудитории. Несуществующие отклоняются.",
+        {"type": "object", "properties": {"usernames": {"type": "array", "items": {"type": "string"}}},
+         "required": ["usernames"]},
+        tool_verify_and_watch,
+    ),
+    (
+        "collect_audience",
+        "Собрать Reels отслеживаемых авторов вашей аудитории и разметить залетевшие (≥3× медианы автора) и обычные.",
+        {"type": "object", "properties": {"per_creator": {"type": "integer"}}},
+        tool_collect_audience,
+    ),
+    (
+        "gap_report",
+        "Что работает у вашей аудитории у других авторов, чем ваши ролики отличаются от залетевших, и согласуется ли "
+        "это с вашим аудитом и наукой. Обновляет выводы, которые учитываются во всех оценках.",
+        {"type": "object", "properties": {}},
+        tool_gap_report,
+    ),
+    (
+        "validation_report",
+        "Насколько можно доверять оценщику: ошибка прогноза против наивного, AUC на корпусе, надёжность (ICC).",
+        {"type": "object", "properties": {}},
+        tool_validation,
+    ),
+]
 HANDLERS = {name: handler for name, _, _, handler in TOOLS}
 
 
@@ -379,7 +647,7 @@ def handle(message: dict[str, Any]) -> dict[str, Any] | None:
             result = handler(params.get("arguments") or {})
             return ok({"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=1)}],
                        "isError": False})
-        except (KeyError, ValueError, LookupError, TypeError) as exc:
+        except (KeyError, ValueError, LookupError, TypeError, instagram.InstagramError, video.VideoError) as exc:
             return ok({"content": [{"type": "text", "text": f"Ошибка: {exc}"}], "isError": True})
         except Exception:  # keep the server alive, report to the client
             traceback.print_exc(file=sys.stderr)

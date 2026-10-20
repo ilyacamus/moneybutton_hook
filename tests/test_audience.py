@@ -1,30 +1,17 @@
 import copy
 import random
 import re
-import subprocess
 
 import pytest
 from fakes import CANNED
 
-from hookbot.core import audience, instagram, learning, video
-from hookbot.core.corpus import Corpus
+from hookbot.core import instagram, learning
 from hookbot.engine import HookEngine
 from hookbot.scout import Scout, ScoutConfig
 from test_scout import FakeGraph
 
 GOOD = "3 ошибки, из-за которых ты теряешь деньги"
 BAD = "Привет! Сегодня немного про бюджет"
-
-
-@pytest.fixture(scope="module")
-def clip(tmp_path_factory):
-    if not video.ffmpeg_available():
-        pytest.skip("ffmpeg not installed")
-    path = tmp_path_factory.mktemp("own") / "Cabc123.mp4"
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=180x320:d=3.5",
-                    "-f", "lavfi", "-i", "sine=d=3.5", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
-                    "-shortest", str(path)], check=True)
-    return path
 
 
 def blind_responder(name, params):

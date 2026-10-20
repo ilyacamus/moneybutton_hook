@@ -70,7 +70,7 @@ class InstagramGraph:
             raise InstagramError(str(exc)) from exc
 
     def discover(self, username: str, limit: int = 25) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        username = username.lstrip("@")
+        username = username.strip().lstrip("@").lower()  # Instagram usernames are lowercase; web pages are not
         fields = (f"business_discovery.username({username})"
                   f"{{username,followers_count,media_count,media.limit({limit}){{{MEDIA_FIELDS},view_count}}}}")
         data = self._get(self.user_id, {"fields": fields}).get("business_discovery")

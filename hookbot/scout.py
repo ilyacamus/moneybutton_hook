@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .core import audience, corpus, features, instagram, knowledge, learning, literature, target, video
+from .core import audience, corpus, instagram, knowledge, literature, target, video
 from .core.corpus import Corpus
 from .core.memory import MemoryStore, now_iso
 from .core.video import Frame
@@ -155,13 +155,11 @@ class Scout:
                                                 transcript=transcript)
         data = analysis.model_dump()
         scores = data.pop("scores")
-        data["criteria"] = {cid: max(0, min(10, int(scores[cid]["score"]))) for cid in knowledge.criterion_ids()}
+        data["criteria"] = {cid: scores[cid]["score"] for cid in knowledge.criterion_ids()}
         data["transcript"] = transcript
         data["video_only_thumbnail"] = facts is None
-        text = " ".join(filter(None, [analysis.spoken_hook, analysis.on_screen_text]))
-        feats = features.extract(text, facts, data)
-        self.corpus.save_analysis(reel["id"], data, feats)
-        return data
+        corpus.store_analysis(self.corpus, reel["id"], data, facts)
+        return self.corpus.get(reel["id"])["analysis"]
 
     async def study_file(
         self,
@@ -212,30 +210,7 @@ class Scout:
 
     def sync_own_results(self) -> int:
         """Own studied reels with a skip rate → hooks with results in the account's memory."""
-        rows = self.store.conn.execute(
-            f"SELECT id FROM reels WHERE source IN ({', '.join('?' * len(audience.OWN_SOURCES))}) "
-            "AND status = 'studied' AND skip_rate IS NOT NULL",
-            audience.OWN_SOURCES,
-        ).fetchall()
-        n = 0
-        for (reel_id,) in rows:
-            reel = self.corpus.get(reel_id)
-            data = reel["analysis"]
-            if not reel["workspace"] or data.get("hook_id"):
-                continue
-            text = data.get("spoken_hook") or data.get("on_screen_text") or reel["caption"][:120] or f"Reel {reel['external_id']}"
-            analysis = learning.analyze(self.store, reel["workspace"], data["criteria"])
-            hook_id = self.store.add_hook(
-                reel["workspace"], text, source="own_reel", on_screen_text=data.get("on_screen_text", ""),
-                visual=data.get("visual", ""), niche=reel["niche"], triggers=data.get("trigger_ids", []),
-                criteria=data["criteria"], score=analysis["score"], meta={"reel_id": reel_id, "url": reel["url"]},
-            )
-            metrics = {k: reel[k] for k in ("skip_rate", "views", "shares", "saves", "likes", "comments") if reel[k] is not None}
-            self.store.add_result(hook_id, reel["workspace"], notes="auto: Instagram insights", **metrics)
-            data["hook_id"] = hook_id
-            self.corpus.save_analysis(reel_id, data, reel["features"] or {})
-            n += 1
-        return n
+        return audience.sync_own_results(self.store)
 
     # audit of the creator's own channel -------------------------------------
 

@@ -190,3 +190,21 @@ def test_split_message_respects_limit():
     text = "\n".join(f"<b>строка {i}</b>" for i in range(1000))
     chunks = handlers.split_message(text, limit=500)
     assert all(len(c) <= 500 for c in chunks) and "\n".join(chunks) == text
+
+
+async def test_channel_commands_answer(env):
+    await env.text("/start")
+    await env.text("/audience")
+    assert "Аудита канала ещё не было" in env.session.texts()[-1]
+    await env.text("/gap")
+    assert "запустите /target" in env.session.texts()[-1]
+    await env.text("/target")  # not an admin: explains how it works
+    assert "Целевая аудитория" in env.session.texts()[-1]
+    await env.text("/science")
+    assert "Корпус залетевших" in env.session.texts()[-1]
+    await env.text("/watch @Coach_A")
+    assert "@coach_a" in env.session.texts()[-1]
+    await env.text("/validate")
+    assert "доверять" in env.session.texts()[-1]
+    await env.text("/myreel")
+    assert "skip" in env.session.texts()[-1]

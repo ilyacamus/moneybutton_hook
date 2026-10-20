@@ -2,7 +2,6 @@ import copy
 import re
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from fakes import CANNED
 
 from hookbot import render
@@ -11,7 +10,7 @@ from hookbot.core.corpus import Corpus
 from hookbot.core.instagram import InstagramError
 from hookbot.engine import HookEngine
 from hookbot.scout import Scout, ScoutConfig
-from test_audience import clip, write_export  # noqa: F401 - fixture reuse
+from test_audience import write_export
 
 WINNER = "3 ошибки, из-за которых ты теряешь деньги"
 PLAIN = "Привет! Сегодня немного про бюджет"
@@ -79,7 +78,7 @@ def responder(name, params):
     return None
 
 
-async def test_target_audience_end_to_end(store, client, tmp_path, clip):  # noqa: F811
+async def test_target_audience_end_to_end(store, client, tmp_path, clip):
     client.responder = responder
     store.update_profile("me", niche="таргет")
     # The channel: hooks without a face in the first second.

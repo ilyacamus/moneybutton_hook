@@ -9,7 +9,6 @@ Every test spends real API credits (a few cents each).
 """
 
 import os
-import subprocess
 from pathlib import Path
 
 import pytest

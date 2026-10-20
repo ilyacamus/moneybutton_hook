@@ -1,4 +1,3 @@
-import pytest
 
 from hookbot import render
 from hookbot.engine import HookInput

@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable
 
 from . import knowledge, stats
-from .features import FEATURE_LITERATURE, FEATURE_SPECS
+from .features import FEATURE_LITERATURE, FEATURE_SPECS, extract
 from .memory import MemoryStore, now_iso
 
 VIRAL_X = 3.0
@@ -703,3 +703,14 @@ def exemplars(store: MemoryStore, user_niche: str, trigger_ids: Iterable[str] = 
             "visual": a.get("visual", ""), "trigger_ids": a.get("trigger_ids", []), "hypothesis": a.get("hypothesis", ""),
         })
     return out
+
+
+def store_analysis(c: Corpus, reel_id: int, data: dict[str, Any], facts: dict[str, Any] | None = None) -> dict[str, float]:
+    """Save a blind analysis (rubric criteria 0–10, triggers, first-second flags…) with its objective features."""
+    data = dict(data)
+    data["criteria"] = {cid: max(0, min(10, int(v))) for cid, v in (data.get("criteria") or {}).items()
+                        if cid in knowledge.criterion_ids()}
+    text = " ".join(filter(None, [data.get("spoken_hook"), data.get("on_screen_text")]))
+    feats = extract(text, facts, data)
+    c.save_analysis(reel_id, data, feats)
+    return feats

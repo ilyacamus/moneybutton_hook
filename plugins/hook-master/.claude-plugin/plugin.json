@@ -1,21 +1,47 @@
 {
   "name": "hook-master",
   "displayName": "HookMaster — оценщик хуков",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Самообучающийся оценщик хуков для Reels, TikTok и Shorts: оценка первых 3 секунд, генерация хуков по сценарию, переписывание, подбор звука, действия и текста. Учится на реальном skip rate автора.",
   "author": {
     "name": "MoneyButton"
   },
   "repository": "https://github.com/ilyacamus/moneybutton_hook",
   "license": "UNLICENSED",
-  "keywords": ["reels", "instagram", "tiktok", "shorts", "hooks", "retention", "skip-rate", "copywriting"],
+  "keywords": [
+    "reels",
+    "instagram",
+    "tiktok",
+    "shorts",
+    "hooks",
+    "retention",
+    "skip-rate",
+    "copywriting"
+  ],
   "mcpServers": {
     "hook-memory": {
       "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/hook_memory_mcp.py"],
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/hook_memory_mcp.py"
+      ],
       "env": {
-        "HOOKBOT_DB": "${CLAUDE_PLUGIN_DATA}/hooks.db"
+        "HOOKBOT_DB": "${CLAUDE_PLUGIN_DATA}/hooks.db",
+        "IG_ACCESS_TOKEN": "${user_config.ig_access_token}",
+        "IG_USER_ID": "${user_config.ig_user_id}"
       }
+    }
+  },
+  "userConfig": {
+    "ig_access_token": {
+      "type": "string",
+      "title": "Instagram Graph API token",
+      "description": "Токен бизнес- или авторского аккаунта: свои Reels, skip rate, демография, поиск авторов. Можно не задавать и работать с CSV-выгрузкой.",
+      "sensitive": true
+    },
+    "ig_user_id": {
+      "type": "string",
+      "title": "Instagram user id",
+      "description": "ID вашего Instagram-аккаунта в Graph API"
     }
   }
 }
