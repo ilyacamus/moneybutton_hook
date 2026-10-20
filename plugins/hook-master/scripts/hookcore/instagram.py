@@ -20,6 +20,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -41,18 +42,50 @@ Getter = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
 class InstagramGraph:
-    def __init__(self, access_token: str, ig_user_id: str, *, version: str = DEFAULT_VERSION,
+    def __init__(self, access_token: str, ig_user_id: str = "", *, version: str = DEFAULT_VERSION,
                  getter: Getter | None = None, timeout: float = 30):
         self.token = access_token
-        self.user_id = ig_user_id
+        self._user_id = ig_user_id
         self.version = version
         self.timeout = timeout
         self._get = getter or self._http_get
 
     @classmethod
     def from_env(cls) -> "InstagramGraph | None":
-        token, user = os.getenv("IG_ACCESS_TOKEN"), os.getenv("IG_USER_ID")
-        return cls(token, user) if token and user else None
+        token = os.getenv("IG_ACCESS_TOKEN")
+        return cls(token, os.getenv("IG_USER_ID") or "") if token else None
+
+    @property
+    def user_id(self) -> str:
+        """The Instagram account id; found through the token's Facebook Pages when not given."""
+        if not self._user_id:
+            accounts = self.linked_accounts()
+            if not accounts:
+                raise InstagramError("К токену не привязан ни один профессиональный аккаунт Instagram: переведите "
+                                     "аккаунт в бизнес или автора, привяжите к странице Facebook и при выпуске токена "
+                                     "выберите эту страницу")
+            if len(accounts) > 1:
+                names = ", ".join(f"@{a['username']} ({a['id']})" for a in accounts)
+                raise InstagramError(f"К токену привязано несколько аккаунтов Instagram: {names}. Укажите нужный в IG_USER_ID")
+            self._user_id = accounts[0]["id"]
+        return self._user_id
+
+    def linked_accounts(self) -> list[dict[str, str]]:
+        """Professional Instagram accounts linked to the Facebook Pages this token can see."""
+        pages = self._get("me/accounts", {"fields": "name,instagram_business_account{id,username}", "limit": 100})
+        return [{"id": p["instagram_business_account"]["id"],
+                 "username": p["instagram_business_account"].get("username", ""), "page": p.get("name", "")}
+                for p in pages.get("data", []) if p.get("instagram_business_account")]
+
+    def token_info(self) -> dict[str, Any]:
+        """Validity, granted permissions and days left of the access token (``debug_token``)."""
+        data = self._get("debug_token", {"input_token": self.token}).get("data") or {}
+        now = datetime.now(timezone.utc).timestamp()
+        # expires_at 0 means a token that never expires; data access lapses separately after 90 days.
+        ends = [t for t in (data.get("expires_at"), data.get("data_access_expires_at")) if t]
+        return {"valid": bool(data.get("is_valid")), "scopes": list(data.get("scopes") or []),
+                "days_left": round((min(ends) - now) / 86400, 1) if ends else None,
+                "error": (data.get("error") or {}).get("message", "")}
 
     def _http_get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         query = urllib.parse.urlencode({**params, "access_token": self.token})
@@ -191,6 +224,109 @@ def verify_creator(ig: InstagramGraph, username: str, limit: int = 12) -> dict[s
         "reels_sampled": len(reels),
         "median_views": sorted(m.get("view_count") or 0 for m in reels)[len(reels) // 2] if reels else None,
     }
+
+
+REQUIRED_SCOPES = {
+    "instagram_basic": "профиль, свои Reels и поиск других авторов",
+    "pages_read_engagement": "доступ к Instagram через страницу Facebook",
+    "instagram_manage_insights": "skip rate и демография аудитории",
+}
+OPTIONAL_SCOPES = {
+    "instagram_manage_comments": "комментарии для профиля аудитории",
+    "pages_show_list": "найти ID аккаунта по токену (иначе задайте IG_USER_ID)",
+}
+REISSUE = "Выпустите токен заново в Graph API Explorer (docs/INSTAGRAM_SETUP.md) и обновите IG_ACCESS_TOKEN"
+
+
+def check_connection(ig: InstagramGraph, *, discover_username: str | None = None) -> list[dict[str, Any]]:
+    """Every API call the robot relies on, with what to fix when one fails.
+
+    ``ok`` is True (works), None (partly: the robot copes without it) or
+    False (blocks the channel audit or the search for the audience's creators).
+    """
+    steps: list[dict[str, Any]] = []
+
+    def step(name: str, ok: bool | None, detail: str, fix: str = "") -> None:
+        steps.append({"step": name, "ok": ok, "detail": detail, "fix": fix})
+
+    try:
+        info = ig.token_info()
+    except InstagramError as exc:
+        step("Токен", None, f"срок и разрешения проверить не удалось: {exc}")
+    else:
+        if not info["valid"]:
+            step("Токен", False, info["error"] or "токен недействителен", REISSUE)
+            return steps
+        left = "бессрочный" if info["days_left"] is None else f"действует ещё {info['days_left']:.0f} дн."
+        if info["days_left"] is not None and info["days_left"] <= 7:
+            step("Токен", None, left, "Продлите: Access Token Debugger → Extend Access Token, и обновите IG_ACCESS_TOKEN")
+        else:
+            step("Токен", True, left)
+        if info["scopes"]:
+            missing = [s for s in REQUIRED_SCOPES if s not in info["scopes"]]
+            optional = [s for s in OPTIONAL_SCOPES if s not in info["scopes"]]
+            if missing:
+                step("Разрешения", False, "нет: " + ", ".join(f"{s} ({REQUIRED_SCOPES[s]})" for s in missing), REISSUE)
+            elif optional:
+                step("Разрешения", None, "нет: " + ", ".join(f"{s} ({OPTIONAL_SCOPES[s]})" for s in optional),
+                     "Добавьте их при следующем выпуске токена")
+            else:
+                step("Разрешения", True, "все нужные выданы")
+
+    try:
+        user_id = ig.user_id
+        profile = ig.own_profile()
+    except InstagramError as exc:
+        step("Аккаунт Instagram", False, str(exc), "Аккаунт должен быть бизнес или автора и привязан к странице "
+             "Facebook, а при выпуске токена нужно отметить эту страницу")
+        return steps
+    username = profile.get("username") or ""
+    step("Аккаунт Instagram", True, f"@{username}, подписчиков: {profile.get('followers_count')}, IG_USER_ID={user_id}")
+
+    try:
+        reels = [m for m in ig.own_media(50) if _is_reel(m)]
+    except InstagramError as exc:
+        step("Свои Reels", False, str(exc), "Нужно разрешение instagram_basic")
+        reels = []
+    else:
+        step("Свои Reels", True if reels else None, f"{len(reels)} среди последних 50 публикаций",
+             "" if reels else "Разбирать нечего: опубликуйте Reels или загрузите CSV-выгрузку")
+
+    if reels:
+        sample = [ig.media_insights(m["id"]) for m in reels[:3]]
+        with_skip = sum(1 for metrics in sample if "reels_skip_rate" in metrics)
+        if not any(sample):
+            step("Статистика Reels", False, "Instagram не отдал ни одной метрики", "Нужно разрешение instagram_manage_insights")
+        elif with_skip:
+            step("Skip rate", True, f"есть у {with_skip} из {len(sample)} последних Reels")
+        else:
+            step("Skip rate", None, f"просмотры есть, reels_skip_rate нет ни у одного из {len(sample)} последних Reels",
+                 "Meta помечает метрику как оценочную и ещё в разработке. Аудит пойдёт по просмотрам; skip rate "
+                 "можно добавить CSV-выгрузкой")
+        try:
+            ig._get(f"{reels[0]['id']}/comments", {"fields": "text", "limit": 1})
+            step("Комментарии", True, "доступны")
+        except InstagramError as exc:
+            step("Комментарии", None, str(exc), "Добавьте разрешение instagram_manage_comments: комментарии помогают "
+                 "понять аудиторию")
+
+    demographics = ig.demographics()
+    labels = {"age": "возраст", "gender": "пол", "city": "город", "country": "страна"}
+    tops = [f"{labels.get(k, k)} {next(iter(v))} ({next(iter(v.values()))}%)" for k, v in demographics.items() if v]
+    step("Демография подписчиков", True if tops else None, "; ".join(tops) or "нет данных",
+         "" if tops else "Instagram отдаёт её от 100 подписчиков и с разрешением instagram_manage_insights. Без неё "
+         "профиль аудитории строится по комментариям и хукам")
+
+    name = discover_username or username
+    try:
+        _, media = ig.discover(name, limit=10)
+    except InstagramError as exc:
+        step("Поиск авторов (Business Discovery)", False, str(exc), "Нужны instagram_basic и pages_read_engagement; "
+             "без этого не изучить авторов вашей аудитории")
+    else:
+        with_views = sum(1 for m in media if _is_reel(m) and m.get("view_count") is not None)
+        step("Поиск авторов (Business Discovery)", True, f"@{name.lstrip('@').lower()}: Reels с просмотрами — {with_views}")
+    return steps
 
 
 def own_records(ig: InstagramGraph, *, workspace: str, niche: str = "", limit: int = 25) -> list[ReelRecord]:

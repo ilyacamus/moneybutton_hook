@@ -2,7 +2,7 @@
 
 They run only when credentials are present (and the network allows the hosts):
     ANTHROPIC_API_KEY                       — Claude tests
-    IG_ACCESS_TOKEN, IG_USER_ID             — Instagram tests
+    IG_ACCESS_TOKEN (IG_USER_ID optional)  — Instagram tests
     HOOKBOT_LIVE_IG_USERNAME                — a public business/creator account to discover
 Run: pytest -m live -v
 Every test spends real API credits (a few cents each).
@@ -19,7 +19,7 @@ from hookbot.engine import HookEngine, HookInput
 
 pytestmark = pytest.mark.live
 needs_claude = pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
-needs_ig = pytest.mark.skipif(not (os.getenv("IG_ACCESS_TOKEN") and os.getenv("IG_USER_ID")), reason="Instagram token not set")
+needs_ig = pytest.mark.skipif(not os.getenv("IG_ACCESS_TOKEN"), reason="Instagram token not set")
 REAL_VIDEOS = Path(os.getenv("HOOKBOT_REAL_VIDEOS", "/home/user/intel-iot-devkit/sample-videos"))
 
 
@@ -62,6 +62,14 @@ async def test_claude_finds_real_fresh_papers(live_engine):
     scan = await live_engine.scan_literature("2025-01-01")
     assert scan.papers, "expected at least one study since 2025"
     assert all(p.link.startswith("http") for p in scan.papers)
+
+
+@needs_ig
+def test_instagram_connection_is_ready():
+    steps = instagram.check_connection(instagram.InstagramGraph.from_env())
+    for s in steps:
+        print(s)
+    assert all(s["ok"] is not False for s in steps), [s for s in steps if s["ok"] is False]
 
 
 @needs_ig

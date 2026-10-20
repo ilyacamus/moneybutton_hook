@@ -29,6 +29,7 @@ Instagram показывает авторам **skip rate** — долю зри�
 - [**Психология первых 3 секунд**](docs/PSYCHOLOGY.md) — приёмы, механизмы, таймлайн, звук/действие/текст.
 - [**Научный подход**](docs/METHODOLOGY.md) — уровни доказательности, свежие исследования, корпус залетевших, аудит канала, целевая аудитория, проверка точности и ограничения.
 - [**Как оценщик учится**](docs/SELF_LEARNING.md) — калибровка рубрики, влияние триггеров, плейбук, робот-разведчик, автономные напоминания.
+- [**Подключение Instagram**](docs/INSTAGRAM_SETUP.md) — токен и проверка `hookbot ig-check`; без Facebook — аудит по таблице и видеофайлам.
 - [**Как продавать**](docs/BUSINESS.md) — Telegram Stars, себестоимость, распространение плагина.
 - База знаний: [`plugins/hook-master/knowledge/`](plugins/hook-master/knowledge/).
 
@@ -44,7 +45,7 @@ Instagram показывает авторам **skip rate** — долю зри�
 
 Нужен `python3` (3.11+) в `PATH`; для разбора видео — `ffmpeg`. Память и выученные веса хранятся в `${CLAUDE_PLUGIN_DATA}/hooks.db` и переживают обновления плагина.
 
-Для аудита канала и поиска авторов вашей аудитории плагин спросит токен Instagram Graph API (`ig_access_token`, `ig_user_id`). Без токена аудит работает по CSV-выгрузке статистики и папке с роликами.
+Для аудита канала и поиска авторов вашей аудитории плагин спросит токен Instagram Graph API (`ig_access_token`; как получить — [INSTAGRAM_SETUP.md](docs/INSTAGRAM_SETUP.md)). Без токена аудит работает по CSV-выгрузке статистики и папке с роликами.
 
 ### Telegram-бот
 
@@ -53,7 +54,7 @@ cp .env.example .env   # TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, ADMIN_IDS
 docker compose up -d --build
 ```
 
-Для аудита канала и разведчика добавьте в `.env` `IG_ACCESS_TOKEN` и `IG_USER_ID` (бизнес- или авторский аккаунт владельца бота) и `SCOUT_ENABLED=1`.
+Для аудита канала и разведчика добавьте в `.env` `IG_ACCESS_TOKEN` (бизнес- или авторский аккаунт владельца бота, [как получить](docs/INSTAGRAM_SETUP.md)) и `SCOUT_ENABLED=1`, затем проверьте подключение: `hookbot ig-check`.
 
 Без Docker:
 
@@ -75,7 +76,8 @@ hookbot generate script.txt
 hookbot result 1 --skip 38 --views 12000
 hookbot stats
 
-# аудит канала и целевая аудитория (нужны IG_ACCESS_TOKEN и IG_USER_ID или CSV)
+# аудит канала и целевая аудитория (нужен IG_ACCESS_TOKEN или CSV)
+hookbot ig-check
 hookbot audit --csv insights.csv --videos ./reels
 hookbot target --budget 40
 hookbot gap

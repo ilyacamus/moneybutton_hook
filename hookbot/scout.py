@@ -36,6 +36,7 @@ from .core.video import Frame
 from .engine import EngineError, HookEngine
 
 log = logging.getLogger(__name__)
+TOKEN_WS = "__ig_token__"
 
 
 @dataclass
@@ -231,7 +232,7 @@ class Scout:
         niche = self.store.get_profile(workspace)["niche"]
         if records is None:
             if self.ig is None:
-                raise instagram.InstagramError("Instagram не подключён: задайте IG_ACCESS_TOKEN и IG_USER_ID "
+                raise instagram.InstagramError("Instagram не подключён: задайте IG_ACCESS_TOKEN "
                                                "или загрузите выгрузку статистики")
             records = await asyncio.to_thread(instagram.own_records, self.ig, workspace=workspace, niche=niche, limit=limit)
         for rec in records:
@@ -395,8 +396,29 @@ class Scout:
 
     # cycle --------------------------------------------------------------------
 
+    async def check_token(self, summary: CycleSummary) -> None:
+        """Once a day: warn before the Instagram token lapses, or the robot silently stops learning."""
+        if self.ig is None:
+            return
+        last = self.store.latest_insight(TOKEN_WS)
+        if last and datetime.fromisoformat(last["created_at"]) > datetime.now(timezone.utc) - timedelta(days=1):
+            return
+        try:
+            info = await asyncio.to_thread(self.ig.token_info)
+        except instagram.InstagramError as exc:
+            summary.errors.append(f"Проверка токена Instagram: {exc}")
+            return
+        self.store.save_insight(TOKEN_WS, info, n_results=0)
+        if not info["valid"]:
+            summary.alerts.append("Токен Instagram недействителен: разведчик не может собирать ролики. "
+                                  "Выпустите новый и обновите IG_ACCESS_TOKEN.")
+        elif info["days_left"] is not None and info["days_left"] <= 7:
+            summary.alerts.append(f"Токен Instagram истекает через {max(info['days_left'], 0):.0f} дн.: продлите его "
+                                  "(Access Token Debugger → Extend Access Token) и обновите IG_ACCESS_TOKEN.")
+
     async def run_once(self) -> CycleSummary:
         summary = CycleSummary()
+        await self.check_token(summary)
         summary.collected = await self.collect(summary)
         summary.labeled = self.corpus.label_all()
         await self.study(summary)

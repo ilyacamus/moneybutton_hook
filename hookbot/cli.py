@@ -44,6 +44,14 @@ async def run(args: argparse.Namespace) -> int:
     ws = args.workspace
     f = render.Plain
 
+    if args.command == "ig-check":
+        ig = instagram.InstagramGraph.from_env()
+        if ig is None:
+            print("IG_ACCESS_TOKEN не задан — как его получить: docs/INSTAGRAM_SETUP.md", file=sys.stderr)
+            return 1
+        steps = await asyncio.to_thread(instagram.check_connection, ig, discover_username=args.username)
+        print(render.render_connection(steps, f))
+        return 0 if all(s["ok"] is not False for s in steps) else 1
     if args.command == "profile":
         fields = {k: v for k, v in (("niche", args.niche), ("audience", args.audience), ("language", args.language)) if v}
         if args.share is not None:
@@ -214,6 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("learn", help="обновить плейбук по накопленным результатам")
     sub.add_parser("stats", help="что модель выучила")
     sub.add_parser("playbook", help="показать текущий плейбук")
+
+    sp = sub.add_parser("ig-check", help="проверить подключение Instagram: токен, разрешения, skip rate, поиск авторов")
+    sp.add_argument("--username", help="чей аккаунт искать через Business Discovery (по умолчанию ваш)")
 
     sp = sub.add_parser("audit", help="аудит вашего канала: что удерживает именно вашу аудиторию")
     sp.add_argument("--csv", help="выгрузка статистики Reels (CSV из Meta Business Suite / панели профессионала)")

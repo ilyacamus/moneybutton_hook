@@ -500,3 +500,16 @@ def render_gap(gap: dict[str, Any] | None, f: type[Plain] = HTML) -> str:
         for ex in gap["exemplars"][:5]:
             lines.append(f"🔥 {ex['outlier_score']:.1f}× — «{f.esc(ex['hook'][:100])}» {f.esc(ex['url'])}")
     return "\n".join(lines)
+
+
+def render_connection(steps: list[dict[str, Any]], f: type[Plain] = HTML) -> str:
+    icons = {True: "✅", None: "⚠️", False: "❌"}
+    lines = [f.b("🔌 Подключение Instagram")]
+    for s in steps:
+        lines.append(f"{icons[s['ok']]} {f.b(s['step'])}: {f.esc(s['detail'])}")
+        if s["fix"]:
+            lines.append(f"   → {f.esc(s['fix'])}")
+    blocking = [s for s in steps if s["ok"] is False]
+    lines += ["", "Можно запускать аудит и поиск аудитории." if not blocking
+              else f"Исправьте {len(blocking)} ❌ — без этого аудит или поиск авторов не заработает."]
+    return "\n".join(lines)

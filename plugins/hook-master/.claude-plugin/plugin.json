@@ -41,7 +41,7 @@
     "ig_user_id": {
       "type": "string",
       "title": "Instagram user id",
-      "description": "ID вашего Instagram-аккаунта в Graph API"
+      "description": "Необязательно: ID Instagram-аккаунта в Graph API. Без него ID определяется по токену; нужен, только если к токену привязано несколько аккаунтов"
     }
   }
 }

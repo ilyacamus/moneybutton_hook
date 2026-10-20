@@ -1,5 +1,6 @@
 import json
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -35,6 +36,9 @@ class FakeGraph:
 
     def __call__(self, path, params):
         self.calls.append((path, params))
+        if path == "debug_token":
+            return {"data": {"is_valid": True, "expires_at": int(time.time()) + 50 * 86400,
+                             "scopes": ["instagram_basic", "pages_read_engagement", "instagram_manage_insights"]}}
         if "business_discovery" in params.get("fields", ""):
             media = [{"id": f"a{i}", "media_product_type": "REELS", "media_type": "VIDEO", "caption": f"Хук {i}",
                       "permalink": f"https://instagram.com/reel/a{i}", "timestamp": ago(10 + i),

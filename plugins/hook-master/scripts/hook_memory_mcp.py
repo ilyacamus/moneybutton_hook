@@ -224,9 +224,9 @@ CORPUS = corpus.Corpus(STORE)
 
 def _ig() -> "instagram.InstagramGraph | None":
     token, user = os.environ.get("IG_ACCESS_TOKEN", ""), os.environ.get("IG_USER_ID", "")
-    if not token or not user or "${" in token or "${" in user:
+    if not token or "${" in token:  # an unset userConfig value arrives as the literal placeholder
         return None
-    return instagram.InstagramGraph(token, user)
+    return instagram.InstagramGraph(token, "" if "${" in user else user)
 
 
 def tool_audit_collect(args: dict[str, Any]) -> dict[str, Any]:
@@ -380,6 +380,15 @@ def tool_gap_report(args: dict[str, Any]) -> dict[str, Any]:
         "gaps": [g for g in gap["gaps"] if g["verdict"] != "нет разрыва"][:10]}
 
 
+def tool_instagram_check(args: dict[str, Any]) -> dict[str, Any]:
+    ig = _ig()
+    if ig is None:
+        raise ValueError("Токен Instagram не задан: ig_access_token в настройках плагина (как получить — docs/INSTAGRAM_SETUP.md "
+                         "в репозитории плагина)")
+    steps = instagram.check_connection(ig, discover_username=args.get("username"))
+    return {"steps": steps, "ready": all(s["ok"] is not False for s in steps)}
+
+
 def tool_validation(args: dict[str, Any]) -> dict[str, Any]:
     return validation.report(STORE, WORKSPACE)
 
@@ -531,6 +540,14 @@ TOOLS: list[Tool] = [
     ),
 ]
 TOOLS += [
+    (
+        "instagram_check",
+        "Проверить подключение Instagram: токен и срок, разрешения, аккаунт, свои Reels, skip rate, комментарии, "
+        "демография, поиск авторов. Для каждой ошибки — что исправить. Вызывай перед первым аудитом.",
+        {"type": "object", "properties": {"username": {"type": "string", "description": "чей аккаунт проверить через "
+                                                       "Business Discovery (по умолчанию ваш)"}}},
+        tool_instagram_check,
+    ),
     (
         "audit_collect",
         "Аудит канала, шаг 1: забрать свои Reels со статистикой (skip rate, просмотры) через Instagram API "
