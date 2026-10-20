@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .core import audience, corpus, instagram, knowledge, literature, target, video, webig
+from .core import audience, breakout, corpus, instagram, knowledge, literature, niches, target, video, webig
 from .core.corpus import Corpus
 from .core.memory import MemoryStore, now_iso
 from .core.video import Frame
@@ -40,9 +40,11 @@ TOKEN_WS = "__ig_token__"
 OPENING_WORDS = 15  # ≈ the first 3–5 seconds of speech
 EXPAND_WS = "__expand__"
 CURSOR_WS = "__collect_cursor__"
-# Default niche: crypto and trading for a Russian-speaking audience (override with NICHE_KEYWORDS).
-NICHE_KEYWORDS = ("крипт", "биткоин", "bitcoin", "btc", "трейд", "trading", "бирж", "usdt", "альткоин", "токен",
-                  "фьючерс", "депозит", "индикатор", "сигнал", "лонг", "шорт", "инвест", "tradingview", "p2p")
+
+
+def _described(reel: dict[str, Any]) -> str:
+    """The source's description of the first seconds (an outlier index describes reels it cannot share)."""
+    return f"\nОписание первых 3 секунд от источника:\n{reel['description']}" if reel.get("description") else ""
 
 
 def opening_words(transcript: str, n: int = OPENING_WORDS) -> str:
@@ -62,7 +64,7 @@ class ScoutConfig:
     collect_per_cycle: int = 0  # creators read per cycle, oldest-read first (0 = all)
     expand_per_cycle: int = 3  # watched creators whose "related accounts" are explored per cycle (0 = off)
     expand_checks_per_cycle: int = 6  # candidates checked per cycle
-    niche_keywords: tuple[str, ...] = NICHE_KEYWORDS
+    niche_keywords: tuple[str, ...] = ()  # override the niche taxonomy's keywords for every niche (NICHE_KEYWORDS)
     niche_min_share: float = 0.3  # share of a candidate's recent captions that must be on the niche's topic
 
     @classmethod
@@ -78,7 +80,7 @@ class ScoutConfig:
             collect_per_cycle=int(os.getenv("SCOUT_COLLECT_PER_CYCLE", cls.collect_per_cycle)),
             expand_per_cycle=int(os.getenv("SCOUT_EXPAND_PER_CYCLE", cls.expand_per_cycle)),
             expand_checks_per_cycle=int(os.getenv("SCOUT_EXPAND_CHECKS", cls.expand_checks_per_cycle)),
-            niche_keywords=keywords or NICHE_KEYWORDS,
+            niche_keywords=keywords,
         )
 
 
@@ -159,12 +161,13 @@ class Scout:
 
     # 2b. grow the niche on its own ------------------------------------------
 
-    def on_niche(self, profile: dict[str, Any], media: list[dict[str, Any]]) -> bool:
-        """Does a candidate make content for the same niche: its bio or enough recent captions mention it."""
-        words = self.config.niche_keywords
-        hit = lambda text: any(w in (text or "").lower() for w in words)  # noqa: E731
+    def on_niche(self, profile: dict[str, Any], media: list[dict[str, Any]], niche: str = "") -> bool:
+        """Does a candidate make content for the same niche: its bio or enough recent captions mention it.
+        Topic words come from the niche taxonomy (``NICHE_KEYWORDS`` overrides them)."""
+        words = self.config.niche_keywords or niches.keywords(niches.canonical(niche))
+        hit = lambda text: bool(niches.matches(text or "", words))  # noqa: E731
         reels = [m for m in media if m["media_product_type"] == "REELS"]
-        if not reels:
+        if not reels or not words:
             return False
         share = sum(hit(m["caption"]) for m in media) / max(1, len(media))
         return hit(profile.get("biography", "")) or share >= self.config.niche_min_share
@@ -197,7 +200,7 @@ class Scout:
                         raise
                     except instagram.InstagramError:
                         continue
-                    if self.on_niche(profile, media):
+                    if self.on_niche(profile, media, source["niche"]):
                         self.corpus.watch(source["workspace"], username, niche=source["niche"])
                         summary.discovered.append(username)
                         for rec in instagram.records_from_discovery(found, media, niche=source["niche"]):
@@ -237,8 +240,11 @@ class Scout:
         if reel["thumbnail_url"]:
             thumb = await asyncio.to_thread(instagram.download, reel["thumbnail_url"], tmp / "thumb.jpg",
                                             max_bytes=5 * 1024 * 1024)
-            return [Frame(0.0, thumb.read_bytes())], None, "Доступна только обложка: видео нельзя скачать (лицензионный звук или запрет автора).", ""
-        raise video.VideoError("Нет ни видео, ни обложки")
+            text = "Доступна только обложка: видео нельзя скачать (лицензионный звук или запрет автора)."
+            return [Frame(0.0, thumb.read_bytes())], None, text + _described(reel), ""
+        if reel.get("description"):
+            return [], None, "Кадров нет." + _described(reel), ""
+        raise video.VideoError("Нет ни видео, ни обложки, ни описания")
 
     async def study_one(self, reel: dict[str, Any]) -> dict[str, Any]:
         with tempfile.TemporaryDirectory() as tmp:
@@ -458,6 +464,8 @@ class Scout:
 
     def learn(self, summary: CycleSummary) -> None:
         for niche in [corpus.ALL_NICHES, *self.corpus.niches()]:
+            if niche != corpus.ALL_NICHES and not niche.startswith(target.TAG_PREFIX):
+                self.refresh_model(niche, summary)
             previous = self.store.latest_insight(corpus.REPORT_WS + niche)
             report = corpus.build_report(self.corpus, niche)
             if not report["effects"]:
@@ -468,9 +476,21 @@ class Scout:
             if niche.startswith(target.TAG_PREFIX):  # keep each creator's audience comparison fresh
                 target.save_gap(self.store, target.gap_report(self.store, niche[len(target.TAG_PREFIX):]))
 
+    def refresh_model(self, niche: str, summary: CycleSummary) -> None:
+        """Retrain the niche's breakout model when it has new studied reels."""
+        stored = self.store.latest_insight(breakout.MODEL_WS + niche)
+        model = breakout.build(self.store, niche)
+        if model is None or (stored and stored["content"]["n"] == model["n"]):
+            return
+        breakout.save(self.store, model)
+        before = stored["content"]["quality"] if stored else None
+        if model["quality"] != before:
+            summary.alerts.append(f"Модель ниши «{model['niche_name']}»: качество прогноза — {model['quality']} "
+                                  f"(Spearman {model['cv']['spearman']}, {model['n']} роликов)")
+
     @staticmethod
     def _alerts(niche: str, before: dict | None, after: dict) -> list[str]:
-        where = "все ниши" if niche == corpus.ALL_NICHES else f"ниша «{niche}»"
+        where = "все ниши" if niche == corpus.ALL_NICHES else f"ниша «{niches.name(niche)}»"
         alerts = []
         old = {s["id"]: s["status"] for s in (before or {}).get("synthesis", [])}
         for s in after["synthesis"]:

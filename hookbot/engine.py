@@ -13,7 +13,7 @@ import anthropic
 import pydantic
 
 from . import prompts
-from .core import corpus, features, knowledge, learning, literature, validation
+from .core import breakout, corpus, features, knowledge, learning, literature, validation
 from .core.learning import Calibration, LearningContext
 from .core.memory import MemoryStore
 from .core.video import Frame
@@ -75,6 +75,7 @@ class EvaluationReport:
     video_facts: dict[str, Any] | None = None
     improved_ids: list[int] = field(default_factory=list)
     benchmark: dict[str, Any] | None = None
+    potential: dict[str, Any] | None = None  # breakout potential in the niche (``core.breakout``)
 
 
 @dataclass
@@ -281,6 +282,7 @@ class HookEngine:
 
         objective = features.extract(" ".join(filter(None, [hook.text, hook.on_screen_text])), facts)
         bench = corpus.benchmark(self.store, niche, features=objective, criteria=criteria)
+        potential = breakout.potential(self.store, niche, criteria)
 
         hook_id = None
         improved_ids: list[int] = []
@@ -296,7 +298,8 @@ class HookEngine:
                 criteria=criteria,
                 score=score,
                 predicted_hold=predicted,
-                meta={"anti_patterns": evaluation.anti_pattern_ids, "video": bool(frames), "features": objective},
+                meta={"anti_patterns": evaluation.anti_pattern_ids, "video": bool(frames), "features": objective,
+                      "niche_potential": potential},
             )
             improved_ids = self._store_variants(workspace, evaluation.improved, "improved", niche, hook_id)
         return EvaluationReport(
@@ -309,6 +312,7 @@ class HookEngine:
             video_facts={"text": video_facts} if video_facts else None,
             improved_ids=improved_ids,
             benchmark=bench,
+            potential=potential,
         )
 
     async def generate(self, workspace: str, script: str, *, count: int = 8, niche: str = "") -> VariantsReport:

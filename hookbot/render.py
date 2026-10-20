@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from typing import Any
 
-from .core import knowledge
+from .core import knowledge, niches
 from .core.learning import MIN_RESULTS, Calibration, LearningContext
 from .engine import EvaluationReport, ResultOutcome, VariantsReport
 from .schemas import ActionPlan, HookVariant
@@ -126,6 +126,8 @@ def render_evaluation(report: EvaluationReport, f: type[Plain] = HTML) -> str:
         lines += ["", f.b("Что мешает")] + [f"❌ {f.esc(s)}" for s in ev.weaknesses]
     if report.video_facts:
         lines += ["", f.b("Факты о видео"), f.esc(report.video_facts["text"])]
+    if report.potential:
+        lines += ["", *render_potential(report.potential, f)]
     if report.benchmark:
         lines += ["", *render_benchmark(report.benchmark, f)]
     if ev.improved:
@@ -257,8 +259,49 @@ def render_playbook(playbook: dict[str, Any] | None, f: type[Plain] = HTML) -> s
     return "\n".join(lines).strip()
 
 
+def render_potential(p: dict[str, Any], f: type[Plain] = HTML) -> list[str]:
+    """Breakout potential of a hook in its niche (``core.breakout.predict``)."""
+    among = "хуков залетевших роликов ниши" if p["sample"] == "breakouts_only" else "хуков роликов ниши"
+    return [
+        f.b(f"🚀 Потенциал в нише «{f.esc(p['niche_name'])}»: ≈{p['expected_x']:g}× от медианы автора"),
+        f"Сильнее, чем {p['percentile']}% {among} (медиана {p['median_x']:g}×).",
+        f.i(f"Модель: {p['n']} роликов, {p['n_creators']} авторов; качество прогноза — {p['quality']} "
+            f"(Spearman {p['cv_spearman']} на авторах, которых модель не видела). Ориентир для сравнения вариантов."),
+    ]
+
+
+def render_niche_detect(result: dict[str, Any], models: dict[str, dict[str, Any]], f: type[Plain] = HTML) -> str:
+    """Which niche a client's channel belongs to, and what the knowledge base holds for it."""
+    head = f"@{result['username']}" if result.get("username") else "Канал"
+    lines = [f.b(f"🧭 Ниша: {head}")]
+    if not result["niches"]:
+        return "\n".join(lines + ["Не удалось определить нишу: в описании и подписях нет слов ни одной ниши из базы. "
+                                  "Задайте нишу вручную: hookbot profile --niche «…»."])
+    for n, item in enumerate(result["niches"], 1):
+        model = models.get(item["id"])
+        base = (f"модель: {model['n']} роликов, качество {model['quality']}" if model
+                else "в базе нет модели — нужен сбор ниши")
+        lines.append(f"{n}. {f.b(f.esc(item['name']))} — {round(100 * item['share'])}% публикаций; {base}")
+        lines.append(f"   {f.i('слова: ' + ', '.join(item['keywords']))}")
+    lines.append(f"Уверенность: {result['confidence']} (текстов: {result['n_texts']}).")
+    return "\n".join(lines)
+
+
+def render_niches(rows: list[dict[str, Any]], f: type[Plain] = HTML) -> str:
+    """The knowledge base by niche: what is collected and how good each niche's model is."""
+    lines = [f.b("📚 База знаний по нишам")]
+    for r in rows:
+        model = r.get("model")
+        status = (f"модель: {model['n']} роликов, {model['n_creators']} авторов, качество {model['quality']} "
+                  f"(ρ={model['cv']['spearman']})" + (", встроенная" if model.get("bundled") else "")) if model else "модели нет"
+        cov = r.get("coverage") or {}
+        collected = f"собрано {cov.get('reels', 0)}, изучено {cov.get('studied', 0)}" if cov else "не собрано"
+        lines.append(f"• {f.b(f.esc(r['name']))} ({r['id']}): {collected}; {status}")
+    return "\n".join(lines)
+
+
 def render_benchmark(bench: dict[str, Any], f: type[Plain] = HTML) -> list[str]:
-    where = "все ниши" if bench["niche"] == "*" else f"ниша «{bench['niche']}»"
+    where = "все ниши" if bench["niche"] == "*" else f"ниша «{niches.name(bench['niche'])}»"
     lines = [f.b(f"📊 Сравнение с залетевшими ({where}: {bench['n_viral']} залетевших, {bench['n_control']} обычных)")]
     score = bench.get("score")
     if score:
@@ -292,7 +335,7 @@ def render_science(report: dict[str, Any] | None, f: type[Plain] = HTML, *, limi
     if not report:
         return ("Корпус залетевших роликов пока пуст. Робот начнёт учиться, когда появятся отслеживаемые аккаунты "
                 "(/watch) или присланные эталоны (/ref).")
-    where = "все ниши" if report["niche"] == "*" else f"ниша «{report['niche']}»"
+    where = "все ниши" if report["niche"] == "*" else f"ниша «{niches.name(report['niche'])}»"
     v = report["validity"]
     lines = [f.b(f"🔬 Что реально работает — {where}"),
              f.i("Сравниваем залетевшие ролики (≥3× медианы автора) с обычными роликами тех же авторов; "

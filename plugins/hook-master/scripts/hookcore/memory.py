@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS reels (
     thumbnail_url   TEXT NOT NULL DEFAULT '',
     local_path      TEXT NOT NULL DEFAULT '',
     transcript      TEXT NOT NULL DEFAULT '',
+    description     TEXT NOT NULL DEFAULT '',
+    feed            INTEGER NOT NULL DEFAULT 1,
     status          TEXT NOT NULL DEFAULT 'new',
     analysis        TEXT,
     features        TEXT,
@@ -122,6 +124,11 @@ FLOAT_FIELDS = ("avg_watch_sec", "video_length_sec")
 INT_FIELDS = ("views", "likes", "comments", "shares", "saves", "follows")
 METRIC_FIELDS = PERCENT_FIELDS + INT_FIELDS + FLOAT_FIELDS
 PROFILE_FIELDS = ("niche", "audience", "language", "share_data")
+REEL_MIGRATIONS = {
+    "transcript": "TEXT NOT NULL DEFAULT ''",
+    "description": "TEXT NOT NULL DEFAULT ''",
+    "feed": "INTEGER NOT NULL DEFAULT 1",
+}
 
 
 def now_iso() -> str:
@@ -154,8 +161,9 @@ class MemoryStore:
             self.conn.execute("PRAGMA foreign_keys=ON")
             self.conn.executescript(SCHEMA)
             columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(reels)")}
-            if "transcript" not in columns:  # databases created before transcripts were stored
-                self.conn.execute("ALTER TABLE reels ADD COLUMN transcript TEXT NOT NULL DEFAULT ''")
+            for column, ddl in REEL_MIGRATIONS.items():  # databases created by older versions
+                if column not in columns:
+                    self.conn.execute(f"ALTER TABLE reels ADD COLUMN {column} {ddl}")
 
     def close(self) -> None:
         self.conn.close()

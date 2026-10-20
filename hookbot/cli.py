@@ -6,13 +6,15 @@ Handy for local testing and for creators who prefer the terminal.
 from __future__ import annotations
 
 import argparse
+import json
 import asyncio
 import os
 import sys
 from pathlib import Path
 
 from . import render
-from .core import audience, corpus, instagram, learning, literature, target, validation, video
+from .core import (audience, breakout, corpus, instagram, learning, literature, niches, outliers, target, validation,
+                   video)
 from .core.memory import METRIC_FIELDS, MemoryStore
 from .engine import EngineError, HookEngine, HookInput
 from .scout import Scout, ScoutConfig
@@ -93,6 +95,8 @@ async def run(args: argparse.Namespace) -> int:
             print(f"Одобрено: {len(chosen)}")
         print(render.render_papers(literature.pending(store), f))
         return 0
+    if args.command == "niche":
+        return await _niche(args, store, ws, f)
     if args.command == "scout" and args.action in ("watch", "unwatch", "list", "import", "seed"):
         c = corpus.Corpus(store)
         if args.action == "seed":
@@ -201,6 +205,77 @@ async def run(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _niche(args: argparse.Namespace, store: MemoryStore, ws: str, f: type[render.Plain]) -> int:
+    """Knowledge base by niche: detect a client's niche, collect and import niche reels, train niche models."""
+    c = corpus.Corpus(store)
+    if args.action == "list":
+        coverage = c.niche_coverage()
+        models = breakout.available(store)
+        rows = [{"id": n["id"], "name": n["name"], "coverage": coverage.get(n["id"]), "model": models.get(n["id"])}
+                for n in niches.all_niches()]
+        rows += [{"id": k, "name": k, "coverage": v, "model": models.get(k)} for k, v in coverage.items()
+                 if not niches.get(k)]
+        print(render.render_niches(rows, f))
+        return 0
+    if args.action == "detect":
+        if args.text:
+            texts = [t for t in _read(args.text).split("\n\n") if t.strip()]
+            result = {"username": "", **niches.classify(texts)}
+        else:
+            ig = instagram.from_env()
+            if ig is None or not args.target:
+                raise ValueError("Укажите аккаунт клиента и источник Instagram (IG_SOURCE=web или APIFY_TOKEN) "
+                                 "— или --text с описанием и подписями")
+            result = await asyncio.to_thread(niches.detect, ig, args.target)
+        print(render.render_niche_detect(result, breakout.available(store), f))
+        if args.set and result["best"]:
+            store.update_profile(ws, niche=niches.name(result["best"]))
+            print(f"Ниша профиля «{ws}»: {niches.name(result['best'])}")
+        return 0
+    if args.action == "queries":
+        niche = niches.canonical(args.target or "")
+        print("\n".join(niches.queries(niche)) or f"Нет запросов для ниши «{niche}»")
+        return 0
+    if args.action == "import-vidiq":
+        if not args.niche:
+            raise ValueError("Укажите --niche: в какую нишу добавить ролики")
+        counts = outliers.import_file(c, args.target, niches.canonical(args.niche), query=args.query or "")
+        print(f"Роликов: {counts['found']}, новых: {counts['new']}, авторов: {counts['creators']}. "
+              "Описание первых секунд сохранено для слепого разбора.")
+        return 0
+    if args.action == "import-pack":
+        with open(args.target, encoding="utf-8") as fh:
+            print(c.import_pack(json.load(fh), niche=niches.canonical(args.niche) if args.niche else None))
+        return 0
+    if args.action == "export":
+        if not args.target or not args.out:
+            raise ValueError("hookbot niche export <ниша> --out pack.json")
+        pack = c.export_pack(niches.canonical(args.target))
+        Path(args.out).write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
+        print(f"Сохранено роликов: {len(pack)} → {args.out} (без статистики клиентов). Публичный репозиторий — не место для этого файла.")
+        return 0
+    if args.action == "build":
+        targets = [niches.canonical(args.target)] if args.target else sorted(c.niche_coverage())
+        for niche in targets:
+            model = breakout.build(store, niche)
+            if model is None:
+                print(f"{niches.name(niche)}: мало данных (нужно ≥{breakout.MIN_REELS} изученных роликов "
+                      f"от ≥{breakout.MIN_CREATORS} авторов)")
+                continue
+            breakout.save(store, model)
+            cv = model["cv"]
+            print(f"{model['niche_name']}: {model['n']} роликов, {model['n_creators']} авторов; качество {model['quality']} "
+                  f"(Spearman {cv['spearman']}, 95% ДИ {cv['spearman_ci']}); прогноз: верхняя пятая "
+                  f"{cv['top_fifth_median_x']}× против нижней {cv['bottom_fifth_median_x']}×")
+            if args.bundle:
+                path = breakout.BUNDLED_DIR / f"{niche}.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(model, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+                print(f"  встроенная модель: {path}")
+        return 0
+    raise ValueError(f"Неизвестное действие: {args.action}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hookbot", description="Оценщик хуков для Reels/TikTok/Shorts")
     p.add_argument("--db", default=DEFAULT_DB, help="путь к SQLite (по умолчанию $HOOKBOT_DB или data/hookbot.db)")
@@ -263,6 +338,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("target", nargs="?", help="аккаунт для watch/unwatch, файл JSONL для import "
                                               "или файл со списком аккаунтов (по одному в строке) для seed")
     sp.add_argument("--niche")
+
+    sp = sub.add_parser("niche", help="база по нишам: ниша клиента, сбор и импорт роликов ниши, модель ниши")
+    sp.add_argument("action", choices=("list", "detect", "queries", "import-vidiq", "import-pack", "export", "build"))
+    sp.add_argument("target", nargs="?", help="detect: аккаунт клиента; queries/build/export: ниша; "
+                                              "import-vidiq: файл с ответом поиска vidIQ; import-pack: файл пакета")
+    sp.add_argument("--niche", help="в какую нишу импортировать")
+    sp.add_argument("--query", help="import-vidiq: поисковый запрос, которым найдены ролики")
+    sp.add_argument("--text", help="detect: описание профиля и подписи (текст или файл, абзацы через пустую строку)")
+    sp.add_argument("--set", action="store_true", help="detect: записать найденную нишу в профиль")
+    sp.add_argument("--out", help="export: куда сохранить пакет")
+    sp.add_argument("--bundle", action="store_true", help="build: сохранить модель в пакет программы (только агрегаты)")
 
     sp = sub.add_parser("ref", help="разобрать залетевший ролик (видеофайл) и добавить в корпус")
     sp.add_argument("video")

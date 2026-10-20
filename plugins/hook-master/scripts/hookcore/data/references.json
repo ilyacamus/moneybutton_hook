@@ -1,0 +1,439 @@
+[
+ {
+  "id": "sokolov1963",
+  "topic": "attention",
+  "citation": "Sokolov, E. N. (1963). Perception and the conditioned reflex. Oxford: Pergamon Press.",
+  "finding": "Ориентировочный рефлекс: новизна и неожиданное изменение стимула автоматически вызывают реакцию внимания."
+ },
+ {
+  "id": "itti_koch2001",
+  "topic": "attention",
+  "citation": "Itti, L., & Koch, C. (2001). Computational modelling of visual attention. Nature Reviews Neuroscience, 2(3), 194–203.",
+  "doi": "10.1038/35058500",
+  "finding": "Восходящее (непроизвольное) внимание управляется салиентностью: контрастом цвета, яркости, ориентации и движения."
+ },
+ {
+  "id": "abrams_christ2003",
+  "topic": "attention",
+  "citation": "Abrams, R. A., & Christ, S. E. (2003). Motion onset captures attention. Psychological Science, 14(5), 427–432.",
+  "doi": "10.1111/1467-9280.01458",
+  "finding": "Начало движения захватывает внимание автоматически, сильнее, чем само движение."
+ },
+ {
+  "id": "crouzet2010",
+  "topic": "attention",
+  "citation": "Crouzet, S. M., Kirchner, H., & Thorpe, S. J. (2010). Fast saccades toward faces: Face detection in just 100 ms. Journal of Vision, 10(4):16.",
+  "doi": "10.1167/10.4.16",
+  "finding": "Взгляд направляется к лицам примерно за 100–140 мс — быстрее, чем к другим объектам."
+ },
+ {
+  "id": "senju_johnson2009",
+  "topic": "attention",
+  "citation": "Senju, A., & Johnson, M. H. (2009). The eye contact effect: mechanisms and development. Trends in Cognitive Sciences, 13(3), 127–134.",
+  "doi": "10.1016/j.tics.2008.11.009",
+  "finding": "Прямой взгляд усиливает внимание и обработку социально значимой информации («эффект зрительного контакта»)."
+ },
+ {
+  "id": "willis_todorov2006",
+  "topic": "attention",
+  "citation": "Willis, J., & Todorov, A. (2006). First impressions: Making up your mind after a 100-ms exposure to a face. Psychological Science, 17(7), 592–598.",
+  "doi": "10.1111/j.1467-9280.2006.01750.x",
+  "finding": "Суждения о человеке по лицу формируются уже за 100 мс и мало меняются при более долгом показе."
+ },
+ {
+  "id": "ambady_rosenthal1993",
+  "topic": "attention",
+  "citation": "Ambady, N., & Rosenthal, R. (1993). Half a minute: Predicting teacher evaluations from thin slices of nonverbal behavior and physical attractiveness. Journal of Personality and Social Psychology, 64(3), 431–441.",
+  "doi": "10.1037/0022-3514.64.3.431",
+  "finding": "«Тонкие срезы»: оценки по нескольким секундам видео предсказывают итоговые суждения."
+ },
+ {
+  "id": "restorff1933",
+  "topic": "attention",
+  "citation": "von Restorff, H. (1933). Über die Wirkung von Bereichsbildungen im Spurenfeld. Psychologische Forschung, 18, 299–342.",
+  "doi": "10.1007/BF02409636",
+  "finding": "Эффект изоляции: элемент, выделяющийся на фоне однородных, лучше замечается и запоминается."
+ },
+ {
+  "id": "zajonc1968",
+  "topic": "attention",
+  "citation": "Zajonc, R. B. (1968). Attitudinal effects of mere exposure. Journal of Personality and Social Psychology, 9(2, Pt. 2), 1–27.",
+  "doi": "10.1037/h0025848",
+  "finding": "Эффект простого предъявления: знакомые стимулы оцениваются позитивнее."
+ },
+ {
+  "id": "bunzeck_duzel2006",
+  "topic": "attention",
+  "citation": "Bunzeck, N., & Düzel, E. (2006). Absolute coding of stimulus novelty in the human substantia nigra/VTA. Neuron, 51(3), 369–379.",
+  "doi": "10.1016/j.neuron.2006.06.021",
+  "finding": "Дофаминергический средний мозг реагирует именно на новизну стимула."
+ },
+ {
+  "id": "loewenstein1994",
+  "topic": "curiosity",
+  "citation": "Loewenstein, G. (1994). The psychology of curiosity: A review and reinterpretation. Psychological Bulletin, 116(1), 75–98.",
+  "doi": "10.1037/0033-2909.116.1.75",
+  "finding": "Теория информационного разрыва: любопытство возникает, когда человек осознаёт пробел между тем, что знает, и тем, что хочет знать."
+ },
+ {
+  "id": "kang2009",
+  "topic": "curiosity",
+  "citation": "Kang, M. J., Hsu, M., Krajbich, I. M., Loewenstein, G., McClure, S. M., Wang, J. T., & Camerer, C. F. (2009). The wick in the candle of learning: Epistemic curiosity activates reward circuitry and enhances memory. Psychological Science, 20(8), 963–973.",
+  "doi": "10.1111/j.1467-9280.2009.02402.x",
+  "finding": "Любопытство активирует систему вознаграждения; люди готовы платить временем за ответ на вопрос, который их заинтересовал."
+ },
+ {
+  "id": "gruber2014",
+  "topic": "curiosity",
+  "citation": "Gruber, M. J., Gelman, B. D., & Ranganath, C. (2014). States of curiosity modulate hippocampus-dependent learning via the dopaminergic circuit. Neuron, 84(2), 486–496.",
+  "doi": "10.1016/j.neuron.2014.08.060",
+  "finding": "Состояние любопытства улучшает запоминание даже сопутствующей информации."
+ },
+ {
+  "id": "ghibellini_meier2025",
+  "topic": "curiosity",
+  "citation": "Ghibellini, R., & Meier, B. (2025). Interruption, recall and resumption: a meta-analysis of the Zeigarnik and Ovsiankina effects. Humanities and Social Sciences Communications, 12.",
+  "doi": "10.1057/s41599-025-05000-w",
+  "finding": "Мета-анализ: преимущества запоминания незавершённых задач (эффект Зейгарник) нет; устойчива лишь склонность возвращаться к прерванному (эффект Овсянкиной)."
+ },
+ {
+  "id": "rogers1977",
+  "topic": "self",
+  "citation": "Rogers, T. B., Kuiper, N. A., & Kirker, W. S. (1977). Self-reference and the encoding of personal information. Journal of Personality and Social Psychology, 35(9), 677–688.",
+  "doi": "10.1037/0022-3514.35.9.677",
+  "finding": "Эффект самореференции: информация, соотнесённая с собой, обрабатывается и запоминается лучше."
+ },
+ {
+  "id": "symons_johnson1997",
+  "topic": "self",
+  "citation": "Symons, C. S., & Johnson, B. T. (1997). The self-reference effect in memory: A meta-analysis. Psychological Bulletin, 121(3), 371–394.",
+  "doi": "10.1037/0033-2909.121.3.371",
+  "finding": "Мета-анализ подтверждает устойчивость эффекта самореференции."
+ },
+ {
+  "id": "moray1959",
+  "topic": "self",
+  "citation": "Moray, N. (1959). Attention in dichotic listening: Affective cues and the influence of instructions. Quarterly Journal of Experimental Psychology, 11(1), 56–60.",
+  "doi": "10.1080/17470215908416289",
+  "finding": "Собственное имя прорывается сквозь неотслеживаемый канал («эффект коктейльной вечеринки»)."
+ },
+ {
+  "id": "cheng_li2023",
+  "topic": "self",
+  "citation": "Cheng, Z., & Li, Y. (2023). Like, comment, and share on TikTok: Exploring the effect of sentiment and second-person view on the user engagement with TikTok news videos. Social Science Computer Review, 42(1), 201–223.",
+  "doi": "10.1177/08944393231178603",
+  "finding": "Исследует связь тональности и обращения во втором лице с лайками, комментариями и репостами новостных видео TikTok (корреляционный дизайн)."
+ },
+ {
+  "id": "reber2004",
+  "topic": "fluency",
+  "citation": "Reber, R., Schwarz, N., & Winkielman, P. (2004). Processing fluency and aesthetic pleasure: Is beauty in the perceiver's processing experience? Personality and Social Psychology Review, 8(4), 364–382.",
+  "doi": "10.1207/s15327957pspr0804_3",
+  "finding": "Лёгкость обработки повышает симпатию и ощущение правдивости."
+ },
+ {
+  "id": "paivio1986",
+  "topic": "fluency",
+  "citation": "Paivio, A. (1986). Mental representations: A dual coding approach. Oxford University Press.",
+  "finding": "Двойное кодирование: вербальная и образная информация обрабатываются разными системами и усиливают друг друга."
+ },
+ {
+  "id": "mayer2009",
+  "topic": "fluency",
+  "citation": "Mayer, R. E. (2009). Multimedia learning (2nd ed.). Cambridge University Press.",
+  "finding": "Принципы мультимедиа: согласованность, сигнализация, избыточность — лишнее и рассинхронизированное мешает пониманию."
+ },
+ {
+  "id": "kahneman_tversky1979",
+  "topic": "loss",
+  "citation": "Kahneman, D., & Tversky, A. (1979). Prospect theory: An analysis of decision under risk. Econometrica, 47(2), 263–291.",
+  "doi": "10.2307/1914185",
+  "finding": "Неприятие потерь: потери весят больше равных выигрышей."
+ },
+ {
+  "id": "gal_rucker2018",
+  "topic": "loss",
+  "citation": "Gal, D., & Rucker, D. D. (2018). The loss of loss aversion: Will it loom larger than its gain? Journal of Consumer Psychology, 28(3), 497–516.",
+  "doi": "10.1002/jcpy.1047",
+  "finding": "Критический обзор: величина и универсальность неприятия потерь оспариваются."
+ },
+ {
+  "id": "baumeister2001",
+  "topic": "loss",
+  "citation": "Baumeister, R. F., Bratslavsky, E., Finkenauer, C., & Vohs, K. D. (2001). Bad is stronger than good. Review of General Psychology, 5(4), 323–370.",
+  "doi": "10.1037/1089-2680.5.4.323",
+  "finding": "Негативная информация обрабатывается сильнее и приоритетнее позитивной."
+ },
+ {
+  "id": "robertson2023",
+  "topic": "headlines",
+  "citation": "Robertson, C. E., Pröllochs, N., Schwarzenegger, K., Pärnamets, P., Van Bavel, J. J., & Feuerriegel, S. (2023). Negativity drives online news consumption. Nature Human Behaviour, 7, 812–822.",
+  "doi": "10.1038/s41562-023-01538-4",
+  "finding": "22 743 рандомизированных A/B-теста заголовков Upworthy: каждое негативное слово в заголовке средней длины повышает CTR на 2,3%, позитивное — снижает примерно на 1%."
+ },
+ {
+  "id": "banerjee_urminsky2025",
+  "topic": "headlines",
+  "citation": "Banerjee, A., & Urminsky, O. (2025). The language that drives engagement: A systematic large-scale analysis of headline experiments. Marketing Science, 44(3), 566–592.",
+  "doi": "10.1287/mksc.2021.0018",
+  "finding": "Тысячи полевых экспериментов: текстовые приёмы из исследований и практики влияют на CTR заголовков, но направление эффекта не всегда совпадает с советами."
+ },
+ {
+  "id": "matias2021",
+  "topic": "headlines",
+  "citation": "Matias, J. N., Munger, K., Aubin Le Quere, M., & Ebersole, C. (2021). The Upworthy Research Archive, a time series of 32,487 experiments in U.S. media. Scientific Data, 8, 195.",
+  "finding": "Открытый архив 32 487 A/B-тестов заголовков (2013–2015) с разделением на поисковую и подтверждающую выборки."
+ },
+ {
+  "id": "festinger1957",
+  "topic": "persuasion",
+  "citation": "Festinger, L. (1957). A theory of cognitive dissonance. Stanford University Press.",
+  "finding": "Противоречие между убеждением и новой информацией создаёт напряжение, которое человек стремится снять."
+ },
+ {
+  "id": "green_brock2000",
+  "topic": "persuasion",
+  "citation": "Green, M. C., & Brock, T. C. (2000). The role of transportation in the persuasiveness of public narratives. Journal of Personality and Social Psychology, 79(5), 701–721.",
+  "doi": "10.1037/0022-3514.79.5.701",
+  "finding": "Нарративный транспорт: погружение в историю повышает убедительность и снижает контраргументацию."
+ },
+ {
+  "id": "cialdini2001",
+  "topic": "persuasion",
+  "citation": "Cialdini, R. B. (2001). Influence: Science and practice (4th ed.). Allyn & Bacon.",
+  "finding": "Принципы влияния: авторитет, социальное доказательство, дефицит и др."
+ },
+ {
+  "id": "laibson1997",
+  "topic": "persuasion",
+  "citation": "Laibson, D. (1997). Golden eggs and hyperbolic discounting. Quarterly Journal of Economics, 112(2), 443–478.",
+  "doi": "10.1162/003355397555253",
+  "finding": "Гиперболическое дисконтирование: немедленные выгоды переоцениваются."
+ },
+ {
+  "id": "kivetz2006",
+  "topic": "persuasion",
+  "citation": "Kivetz, R., Urminsky, O., & Zheng, Y. (2006). The goal-gradient hypothesis resurrected: Purchase acceleration, illusionary goal progress, and customer retention. Journal of Marketing Research, 43(1), 39–58.",
+  "doi": "10.1509/jmkr.43.1.39",
+  "finding": "Эффект градиента цели: мотивация растёт по мере видимого приближения к цели."
+ },
+ {
+  "id": "berger_milkman2012",
+  "topic": "virality",
+  "citation": "Berger, J., & Milkman, K. L. (2012). What makes online content viral? Journal of Marketing Research, 49(2), 192–205.",
+  "doi": "10.1509/jmr.10.0353",
+  "finding": "Статьи, вызывающие эмоции высокого возбуждения (восхищение, гнев, тревога), чаще попадают в самые пересылаемые; грусть — реже."
+ },
+ {
+  "id": "bakhshi2014",
+  "topic": "virality",
+  "citation": "Bakhshi, S., Shamma, D. A., & Gilbert, E. (2014). Faces engage us: Photos with faces attract more likes and comments on Instagram. Proc. CHI '14, 965–974.",
+  "doi": "10.1145/2556288.2557403",
+  "finding": "Фото с лицами в Instagram получают больше лайков и комментариев (наблюдательное исследование)."
+ },
+ {
+  "id": "chen2016micro",
+  "topic": "virality",
+  "citation": "Chen, J., Song, X., Nie, L., Wang, X., Zhang, H., & Chua, T.-S. (2016). Micro tells macro: Predicting the popularity of micro-videos via a transductive model. Proc. ACM Multimedia '16, 898–907.",
+  "finding": "Популярность коротких видео (Vine) предсказуема по мультимодальным признакам: визуальным, акустическим, текстовым и социальным."
+ },
+ {
+  "id": "szabo_huberman2010",
+  "topic": "virality",
+  "citation": "Szabo, G., & Huberman, B. A. (2010). Predicting the popularity of online content. Communications of the ACM, 53(8), 80–88. arXiv:0811.0405.",
+  "finding": "Ранняя популярность хорошо предсказывает итоговую (лог-линейная связь); для YouTube нужно наблюдать дольше, чем для Digg."
+ },
+ {
+  "id": "teixeira2012",
+  "topic": "video_ads",
+  "citation": "Teixeira, T., Wedel, M., & Pieters, R. (2012). Emotion-induced engagement in internet video advertisements. Journal of Marketing Research, 49(2), 144–159.",
+  "doi": "10.1509/jmr.10.0207",
+  "finding": "Эксперимент с айтрекингом, распознаванием эмоций и возможностью переключиться: удивление лучше всего концентрирует внимание, радость лучше удерживает зрителя от переключения."
+ },
+ {
+  "id": "teixeira2010",
+  "topic": "video_ads",
+  "citation": "Teixeira, T. S., Wedel, M., & Pieters, R. (2010). Moment-to-moment optimal branding in TV commercials: Preventing avoidance by pulsing. Marketing Science, 29(5), 783–804.",
+  "finding": "Заметный бренд в ролике повышает вероятность переключения; короткие «пульсирующие» появления бренда снижают избегание."
+ },
+ {
+  "id": "elpers2003",
+  "topic": "video_ads",
+  "citation": "Woltman Elpers, J. L. C. M., Wedel, M., & Pieters, R. G. M. (2003). Why do consumers stop viewing television commercials? Two experiments on the influence of moment-to-moment entertainment and information value. Journal of Marketing Research, 40(4), 437–453.",
+  "finding": "Развлекательность момента удерживает зрителя, информационность без развлечения повышает вероятность прекратить просмотр."
+ },
+ {
+  "id": "pieters_wedel2004",
+  "topic": "video_ads",
+  "citation": "Pieters, R., & Wedel, M. (2004). Attention capture and transfer in advertising: Brand, pictorial, and text-size effects. Journal of Marketing, 68(2), 36–50.",
+  "finding": "Изображение лучше захватывает внимание независимо от размера; размер текста напрямую влияет на внимание к тексту."
+ },
+ {
+  "id": "salminen2024",
+  "topic": "short_video",
+  "citation": "Salminen, J., Wahid, R., Yang, Y., & Jansen, B. J. (2024). Engagement patterns in TikTok: An analysis of short video ads. Proc. HT '24, 323–329.",
+  "doi": "10.1145/3648188.3677048",
+  "finding": "Большинство зрителей рекламы в TikTok уходят в первой четверти ролика."
+ },
+ {
+  "id": "li2023dashlet",
+  "topic": "short_video",
+  "citation": "Li, Z., Xie, Y., Netravali, R., & Jamieson, K. (2023). Dashlet: Taming swipe uncertainty for robust short video streaming. Proc. USENIX NSDI '23. arXiv:2204.12954.",
+  "finding": "Свайпы концентрируются в начале и конце ролика: 29% — в первые 20% длительности (данные пользователей MTurk)."
+ },
+ {
+  "id": "meta_skip_rate",
+  "topic": "short_video",
+  "citation": "Meta (2025). Instagram Platform — Instagram Media Insights: reels_skip_rate. Developer documentation.",
+  "url": "https://developers.facebook.com/docs/instagram-platform/reference/instagram-media/insights",
+  "finding": "reels_skip_rate — доля просмотров, в которых зритель пропустил Reels в первые 3 секунды (ранние пропуски / начальные просмотры)."
+ },
+ {
+  "id": "gilardi2023",
+  "topic": "method",
+  "citation": "Gilardi, F., Alizadeh, M., & Kubli, M. (2023). ChatGPT outperforms crowd workers for text-annotation tasks. PNAS, 120(30), e2305016120.",
+  "doi": "10.1073/pnas.2305016120",
+  "finding": "LLM-разметка точнее краудсорсинга и согласованнее; обосновывает LLM как оценщика при проверке надёжности."
+ },
+ {
+  "id": "zheng2023",
+  "topic": "method",
+  "citation": "Zheng, L., et al. (2023). Judging LLM-as-a-judge with MT-Bench and Chatbot Arena. NeurIPS 2023 Datasets and Benchmarks. arXiv:2306.05685.",
+  "finding": "LLM-судьи имеют смещения (позиция, многословность, самопредпочтение) — их надо контролировать."
+ },
+ {
+  "id": "shrout_fleiss1979",
+  "topic": "method",
+  "citation": "Shrout, P. E., & Fleiss, J. L. (1979). Intraclass correlations: Uses in assessing rater reliability. Psychological Bulletin, 86(2), 420–428.",
+  "doi": "10.1037/0033-2909.86.2.420",
+  "finding": "Внутриклассовая корреляция (ICC) для оценки надёжности оценщиков."
+ },
+ {
+  "id": "mcgraw_wong1996",
+  "topic": "method",
+  "citation": "McGraw, K. O., & Wong, S. P. (1996). Forming inferences about some intraclass correlation coefficients. Psychological Methods, 1(1), 30–46.",
+  "doi": "10.1037/1082-989X.1.1.30",
+  "finding": "Формы ICC, включая ICC(A,1) — абсолютное согласие одного оценщика."
+ },
+ {
+  "id": "koo_li2016",
+  "topic": "method",
+  "citation": "Koo, T. K., & Li, M. Y. (2016). A guideline of selecting and reporting intraclass correlation coefficients for reliability research. Journal of Chiropractic Medicine, 15(2), 155–163.",
+  "doi": "10.1016/j.jcm.2016.02.012",
+  "finding": "Пороги ICC: <0,5 плохая, 0,5–0,75 умеренная, 0,75–0,9 хорошая, >0,9 отличная надёжность."
+ },
+ {
+  "id": "hoerl_kennard1970",
+  "topic": "method",
+  "citation": "Hoerl, A. E., & Kennard, R. W. (1970). Ridge regression: Biased estimation for nonorthogonal problems. Technometrics, 12(1), 55–67.",
+  "doi": "10.1080/00401706.1970.10488634",
+  "finding": "Гребневая регрессия: устойчивые оценки при малых и коррелированных данных."
+ },
+ {
+  "id": "efron_morris1975",
+  "topic": "method",
+  "citation": "Efron, B., & Morris, C. (1975). Data analysis using Stein's estimator and its generalizations. Journal of the American Statistical Association, 70(350), 311–319.",
+  "doi": "10.1080/01621459.1975.10479864",
+  "finding": "Стягивание индивидуальных оценок к общему среднему уменьшает ошибку (эмпирический Байес)."
+ },
+ {
+  "id": "efron1979",
+  "topic": "method",
+  "citation": "Efron, B. (1979). Bootstrap methods: Another look at the jackknife. Annals of Statistics, 7(1), 1–26.",
+  "doi": "10.1214/aos/1176344552",
+  "finding": "Бутстреп-интервалы без предположений о распределении."
+ },
+ {
+  "id": "benjamini_hochberg1995",
+  "topic": "method",
+  "citation": "Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate: A practical and powerful approach to multiple testing. Journal of the Royal Statistical Society B, 57(1), 289–300.",
+  "doi": "10.1111/j.2517-6161.1995.tb02031.x",
+  "finding": "Контроль доли ложных открытий при проверке многих гипотез."
+ },
+ {
+  "id": "cliff1993",
+  "topic": "method",
+  "citation": "Cliff, N. (1993). Dominance statistics: Ordinal analyses to answer ordinal questions. Psychological Bulletin, 114(3), 494–509.",
+  "doi": "10.1037/0033-2909.114.3.494",
+  "finding": "Дельта Клиффа — непараметрический размер эффекта."
+ },
+ {
+  "id": "hanley_mcneil1982",
+  "topic": "method",
+  "citation": "Hanley, J. A., & McNeil, B. J. (1982). The meaning and use of the area under a receiver operating characteristic (ROC) curve. Radiology, 143(1), 29–36.",
+  "doi": "10.1148/radiology.143.1.7063747",
+  "finding": "AUC = вероятность, что случайный положительный пример получит более высокую оценку, чем отрицательный."
+ },
+ {
+  "id": "mangel_samaniego1984",
+  "topic": "method",
+  "citation": "Mangel, M., & Samaniego, F. J. (1984). Abraham Wald's work on aircraft survivability. Journal of the American Statistical Association, 79(386), 259–267.",
+  "doi": "10.1080/01621459.1984.10478038",
+  "finding": "Ошибка выжившего: выводы только по «выжившим» объектам систематически искажены."
+ },
+ {
+  "id": "kohavi2020",
+  "topic": "method",
+  "citation": "Kohavi, R., Tang, D., & Xu, Y. (2020). Trustworthy online controlled experiments: A practical guide to A/B testing. Cambridge University Press.",
+  "finding": "Методология онлайн-экспериментов: рандомизация, мощность, защитные метрики."
+ },
+ {
+  "id": "stuppy2024",
+  "topic": "short_video",
+  "citation": "Stuppy, A., Landwehr, J. R., & McGraw, A. P. (2024). The art of slowness: Slow motion enhances consumer evaluations by increasing processing fluency. Journal of Marketing Research, 61(2), 185–203.",
+  "doi": "10.1177/00222437231179187",
+  "finding": "Полевые данные и 6 экспериментов: замедленная съёмка повышает вирусность коротких видео (лайки, просмотры) и отношение к бренду через беглость обработки; лучше всего — для приятных роликов со сложным движением, хуже — когда нужно возбуждение."
+ },
+ {
+  "id": "wals2026",
+  "topic": "video_ads",
+  "citation": "Wals, S. F., Grewal, D., Wilms, R., Hilken, T., Briassouli, A., & Wetzels, M. (2026). The dynamic effects of visual complexity and scene cuts on viewer attention. Journal of the Academy of Marketing Science, 54(2), 596–617.",
+  "doi": "10.1007/s11747-025-01137-x",
+  "finding": "Айтрекинг 2 520 просмотров 42 роликов + покадровое компьютерное зрение: склейки (короткие сцены) повышают синхронность внимания зрителей, визуальная сложность снижает её с задержкой."
+ },
+ {
+  "id": "tellis2019",
+  "topic": "virality",
+  "citation": "Tellis, G. J., MacInnis, D. J., Tirunillai, S., & Zhang, Y. (2019). What drives virality (sharing) of online digital content? The critical role of information, emotion, and brand prominence. Journal of Marketing, 83(4), 1–20.",
+  "finding": "Два полевых исследования видеорекламы YouTube (11 эмоций, 60+ характеристик): информационная подача снижает пересылки, позитивные эмоции (развлечение, азарт, вдохновение, тепло) повышают; ранний бренд вредит."
+ },
+ {
+  "id": "luo2024",
+  "topic": "curiosity",
+  "citation": "Luo, C., Jiang, Z., Li, X., Yi, C., & Tucker, C. (2024). Choosing to discover the unknown: The effects of choice on user attention to online video advertising. Management Science, 70(10), 6983–7003.",
+  "doi": "10.1287/mnsc.2019.03291",
+  "finding": "Онлайн- и лабораторные эксперименты: когда зритель формирует догадку о содержании и затем проверяет её, внимание к видео растёт; эффект сильнее для незнакомого контента."
+ },
+ {
+  "id": "bruns2025",
+  "topic": "method",
+  "citation": "Bruns, D., Kopka, J. F., Borgmann, L., Prior, S., & Langner, T. (2025). Measuring gaining and holding attention to social media ads with viewport logging: A validation study using mobile eye-tracking. Journal of Advertising, 54(5), 655–672.",
+  "doi": "10.1080/00913367.2025.2524186",
+  "finding": "Мобильный айтрекинг в ленте Instagram: если пост был на экране ≥1 с, взгляд задерживался >1 с в 94% случаев — метрики времени на экране валидно отражают внимание."
+ },
+ {
+  "id": "li2024snapugc",
+  "topic": "method",
+  "citation": "Li, D., et al. (2024). Delving deep into engagement prediction of short videos. Proc. ECCV 2024. arXiv:2410.00289.",
+  "finding": "90 000 коротких видео Snapchat: вовлечённость лучше мерить долей досмотра и вероятностью досмотреть дольше 5 с, а не просмотрами; техническое качество видео слабо связано с вовлечённостью."
+ },
+ {
+  "id": "sun2025lmm",
+  "topic": "short_video",
+  "citation": "Sun, W., Cao, et al. (2025). Engagement prediction of short videos with large multimodal models. arXiv:2508.02516.",
+  "finding": "Мультимодальная модель со звуком предсказывает вовлечённость коротких видео лучше, чем модель только по кадрам и тексту — звук несёт информацию о вовлечённости (препринт)."
+ },
+ {
+  "id": "gupta2025virality",
+  "topic": "method",
+  "citation": "Gupta, A., et al. (2025). Understanding virality: A rubric based vision-language model framework for short-form edutainment evaluation. arXiv:2512.21402 (under review).",
+  "finding": "Визуально-языковая модель извлекает аудиовизуальные признаки YouTube Shorts, регрессия по ним предсказывает вовлечённость — та же схема, что у этого робота (препринт)."
+ },
+ {
+  "id": "simonov2025",
+  "topic": "video_ads",
+  "citation": "Simonov, A., Valletti, T., & Veiga, A. (2025). Attention spillovers from news to ads: Evidence from an eye-tracking experiment. Journal of Marketing Research.",
+  "doi": "10.1177/00222437241256900",
+  "finding": "Айтрекинг-эксперимент: внимание к основному контенту «перетекает» на соседнюю рекламу — контекст влияет на внимание."
+ }
+]

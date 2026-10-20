@@ -23,7 +23,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable
 
-from . import knowledge, stats
+from . import knowledge, niches, stats
 from .features import FEATURE_LITERATURE, FEATURE_SPECS, extract
 from .memory import MemoryStore, now_iso
 
@@ -34,6 +34,7 @@ MATURE_HOURS = 72
 MIN_CREATOR_REELS = 5
 MIN_GROUP = 3
 CONTROL_LABELS = ("typical", "flop")
+OWN_SOURCES = ("instagram_own", "own_csv", "own_file")  # a client's own channel: calibrates the account, not the niche
 REPORT_WS = "__corpus__:"
 ALL_NICHES = "*"
 WEIGHT_PRIOR_STRENGTH = 40.0  # corpus weights replace the expert prior gradually
@@ -65,6 +66,8 @@ class ReelRecord:
     local_path: str = ""
     workspace: str = ""
     transcript: str = ""  # speech of the whole video when the source provides it
+    description: str = ""  # the source's description of the first seconds, when there is no video to look at
+    feed: bool = True  # read from the creator's feed; False when picked by outcome (an outlier index)
 
 
 def label_for(score: float | None) -> str | None:
@@ -100,12 +103,15 @@ class Corpus:
     # ------------------------------------------------------------------ #
 
     UPDATABLE = ("url", "creator", "caption", "published_at", "views", "likes", "comments", "shares", "saves",
-                 "skip_rate", "followers", "baseline_views", "video_url", "thumbnail_url", "local_path", "transcript")
+                 "skip_rate", "followers", "baseline_views", "video_url", "thumbnail_url", "local_path", "transcript",
+                 "description")
 
     def upsert(self, rec: ReelRecord) -> int:
         """Insert a reel or refresh its metrics; analysis and status are kept."""
         now = now_iso()
         data = asdict(rec)
+        data["niche"] = niches.canonical(rec.niche)
+        data["feed"] = int(rec.feed)
         with self.lock, self.conn:
             row = self.conn.execute(
                 "SELECT id, niche FROM reels WHERE source = ? AND external_id = ?", (rec.source, rec.external_id)
@@ -118,8 +124,10 @@ class Corpus:
                 )
                 return int(cur.lastrowid)
             updates = {k: data[k] for k in self.UPDATABLE if data[k] not in (None, "")}
-            if rec.niche and not row["niche"]:
-                updates["niche"] = rec.niche
+            if data["niche"] and not row["niche"]:
+                updates["niche"] = data["niche"]
+            if rec.feed:
+                updates["feed"] = 1  # seen in the feed: now part of the creator's baseline
             assignments = ", ".join(f"{k} = ?" for k in updates)
             self.conn.execute(
                 f"UPDATE reels SET {assignments + ', ' if assignments else ''}updated_at = ? WHERE id = ?",
@@ -156,11 +164,13 @@ class Corpus:
         Baseline = median views of the creator's *other* mature reels (needs
         ``MIN_CREATOR_REELS`` reels in total); a baseline supplied by the
         source is used when the creator has too few reels in the corpus.
+        Reels picked by outcome (``feed = 0``, e.g. from an outlier index) never
+        enter a baseline: a median of breakouts would make every reel look ordinary.
         """
         now = now or datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=mature_hours)
         rows = [dict(r) for r in self.conn.execute(
-            "SELECT id, creator, views, published_at, baseline_views, label FROM reels WHERE views IS NOT NULL"
+            "SELECT id, creator, views, published_at, baseline_views, label, feed FROM reels WHERE views IS NOT NULL"
         ).fetchall()]
         by_creator: dict[str, list[dict]] = {}
         for r in rows:
@@ -172,7 +182,7 @@ class Corpus:
         for creator, reels in by_creator.items():
             mature = [r for r in reels if r["mature"]]
             for r in mature:
-                others = [o["views"] for o in mature if o["id"] != r["id"]]
+                others = [o["views"] for o in mature if o["id"] != r["id"] and o["feed"]]
                 if creator and len(others) >= MIN_CREATOR_REELS - 1:
                     baseline = stats.median(others)
                 else:
@@ -194,8 +204,9 @@ class Corpus:
         from the same creator (closest publish time), then other labeled reels."""
         sql, params = "SELECT * FROM reels WHERE status = 'new' AND label IS NOT NULL", []
         if niche:
-            sql += " AND niche = ?"
-            params.append(niche)
+            tags = self.tags_for(niche)
+            sql += f" AND niche IN ({', '.join('?' * len(tags))})"
+            params += tags
         new = [self._row(r) for r in self.conn.execute(sql + " ORDER BY id", params).fetchall()]
         studied_controls = {
             r["creator"] for r in self.conn.execute(
@@ -245,15 +256,45 @@ class Corpus:
         sql = "SELECT * FROM reels WHERE status = 'studied' AND label IS NOT NULL"
         params: list[Any] = []
         if niche and niche != ALL_NICHES:
-            sql += " AND niche = ?"
-            params.append(niche)
+            tags = self.tags_for(niche)
+            sql += f" AND niche IN ({', '.join('?' * len(tags))})"
+            params += tags
         # Stable order: reports (bootstrap intervals) must be reproducible run to run.
         return [self._row(r) for r in self.conn.execute(sql + " ORDER BY id", params).fetchall()]
 
+    def tags_for(self, niche: str) -> list[str]:
+        """Stored niche tags that mean this niche (older databases kept free-text tags)."""
+        want = niches.canonical(niche)
+        stored = [r[0] for r in self.conn.execute("SELECT DISTINCT niche FROM reels").fetchall()]
+        return sorted({want, *(t for t in stored if t and niches.canonical(t) == want)})
+
+    def niche_rows(self, niche: str) -> list[dict[str, Any]]:
+        """The niche's knowledge: studied reels of other creators (a client's own reels only calibrate the client)."""
+        return [r for r in self.studied(niche) if r["source"] not in OWN_SOURCES]
+
     def niches(self) -> list[str]:
-        return [r[0] for r in self.conn.execute(
+        return sorted({niches.canonical(r[0]) for r in self.conn.execute(
             "SELECT DISTINCT niche FROM reels WHERE niche != '' AND status = 'studied'"
-        ).fetchall()]
+        ).fetchall()})
+
+    def niche_coverage(self) -> dict[str, dict[str, int]]:
+        """Per niche: reels, creators, reels studied, viral and control reels among them."""
+        out: dict[str, dict[str, int]] = {}
+        for row in self.conn.execute(
+            f"SELECT niche, creator, status, label FROM reels WHERE niche != '' AND niche NOT LIKE '%:%' "
+            f"AND source NOT IN ({', '.join('?' * len(OWN_SOURCES))})", OWN_SOURCES
+        ).fetchall():
+            item = out.setdefault(niches.canonical(row["niche"]),
+                                  {"reels": 0, "creators": set(), "studied": 0, "viral": 0, "control": 0})
+            item["reels"] += 1
+            item["creators"].add(row["creator"])
+            if row["status"] == "studied":
+                item["studied"] += 1
+                item["viral"] += row["label"] == "viral"
+                item["control"] += row["label"] in CONTROL_LABELS
+        for item in out.values():
+            item["creators"] = len(item["creators"])
+        return out
 
     def counts(self) -> dict[str, Any]:
         one = lambda sql: self.conn.execute(sql).fetchone()[0]  # noqa: E731
@@ -272,6 +313,35 @@ class Corpus:
         }
 
     # ------------------------------------------------------------------ #
+    # Niche packs: move a niche's studied reels between databases
+    # ------------------------------------------------------------------ #
+
+    PACK_FIELDS = tuple(f for f in ReelRecord.__dataclass_fields__ if f not in ("workspace", "local_path", "skip_rate"))
+
+    def export_pack(self, niche: str) -> list[dict[str, Any]]:
+        """Studied reels of other creators in a niche, with their blind analyses. Clients' own reels
+        (and private stats such as skip rate) are never exported."""
+        return [{**{k: r[k] for k in self.PACK_FIELDS}, "feed": bool(r["feed"]), "analysis": r["analysis"]}
+                for r in self.studied(niche) if not r["workspace"]]
+
+    def import_pack(self, items: Iterable[dict[str, Any]], niche: str | None = None) -> dict[str, int]:
+        new = analysed = total = 0
+        for item in items:
+            total += 1
+            data = {k: item[k] for k in self.PACK_FIELDS if k in item}
+            if niche:
+                data["niche"] = niche
+            rec = ReelRecord(**data)
+            existing = self.find(rec.source, rec.external_id)
+            reel_id = self.upsert(rec)
+            new += existing is None
+            if item.get("analysis") and (existing is None or existing["status"] != "studied"):
+                store_analysis(self, reel_id, item["analysis"])
+                analysed += 1
+        self.label_all()
+        return {"items": total, "new": new, "analysed": analysed}
+
+    # ------------------------------------------------------------------ #
     # Watchlist: accounts the scout follows
     # ------------------------------------------------------------------ #
 
@@ -279,7 +349,7 @@ class Corpus:
         with self.lock, self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO watchlist(workspace, platform, username, niche, added_at) VALUES (?, ?, ?, ?, ?)",
-                (workspace, platform, username.lstrip("@").lower(), niche, now_iso()),
+                (workspace, platform, username.lstrip("@").lower(), niches.canonical(niche), now_iso()),
             )
 
     def unwatch(self, workspace: str, username: str, *, platform: str = "instagram") -> None:
@@ -587,9 +657,11 @@ def evidence_synthesis(effects: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def build_report(corpus: Corpus, niche: str = ALL_NICHES, *, now: datetime | None = None) -> dict[str, Any]:
-    rows = corpus.studied(None if niche == ALL_NICHES else niche)
+    rows = corpus.studied(None) if niche == ALL_NICHES else corpus.niche_rows(niche)
+    # Reels picked by outcome (an outlier index) have no typical reels of the same creators to compare with.
+    rows = [r for r in rows if r["feed"]]
     return {
-        "niche": niche,
+        "niche": niches.canonical(niche),
         "generated_at": now_iso(),
         "counts": corpus.counts() if niche == ALL_NICHES else {
             "studied": {lbl: sum(1 for r in rows if r["label"] == lbl) for lbl in ("viral", "above", "typical", "flop")}
@@ -605,11 +677,11 @@ def build_report(corpus: Corpus, niche: str = ALL_NICHES, *, now: datetime | Non
 
 def save_report(store: MemoryStore, report: dict[str, Any]) -> None:
     n = sum((report["counts"].get("studied") or {}).values())
-    store.save_insight(REPORT_WS + report["niche"], report, n_results=n)
+    store.save_insight(REPORT_WS + niches.canonical(report["niche"]), report, n_results=n)
 
 
 def latest_report(store: MemoryStore, niche: str | None) -> dict[str, Any] | None:
-    for key in ([niche] if niche else []) + [ALL_NICHES]:
+    for key in ([niches.canonical(niche)] if niche else []) + [ALL_NICHES]:
         insight = store.latest_insight(REPORT_WS + key)
         if insight:
             return insight["content"]
@@ -617,10 +689,14 @@ def latest_report(store: MemoryStore, niche: str | None) -> dict[str, Any] | Non
 
 
 def match_niche(store: MemoryStore, user_niche: str) -> str | None:
-    """The corpus niche tag contained in the user's free-text niche (longest wins)."""
+    """The corpus niche for the user's free-text niche: its taxonomy niche, else a tag the text contains."""
+    tags = Corpus(store).niches()
+    wanted = niches.canonical(user_niche or "")
+    if wanted in tags:
+        return wanted
     text = (user_niche or "").lower()
-    tags = [t for t in Corpus(store).niches() if t.lower() in text]
-    return max(tags, key=len) if tags else None
+    contained = [t for t in tags if t.lower() in text]
+    return max(contained, key=len) if contained else None
 
 
 def prior_weights(store: MemoryStore, user_niche: str = "") -> dict[str, float] | None:

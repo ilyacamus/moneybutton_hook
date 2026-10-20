@@ -24,7 +24,7 @@ from . import corpus, stats
 from .corpus import CONTROL_LABELS, Corpus
 from .memory import MemoryStore, now_iso
 
-OWN_SOURCES = ("instagram_own", "own_csv", "own_file")
+OWN_SOURCES = corpus.OWN_SOURCES
 REPORT_WS = "__audience__:"
 MIN_REELS = 8
 MIN_VIEWS = 100  # rates on fewer views are noise

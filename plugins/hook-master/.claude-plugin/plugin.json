@@ -1,7 +1,7 @@
 {
   "name": "hook-master",
   "displayName": "HookMaster — оценщик хуков",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Самообучающийся оценщик хуков для Reels, TikTok и Shorts: оценка первых 3 секунд, генерация хуков по сценарию, переписывание, подбор звука, действия и текста. Учится на реальном skip rate автора.",
   "author": {
     "name": "MoneyButton"

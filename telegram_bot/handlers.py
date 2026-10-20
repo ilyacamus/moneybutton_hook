@@ -19,7 +19,7 @@ from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 from aiogram.utils.chat_action import ChatActionSender
 
 from hookbot import render
-from hookbot.core import audience, corpus, instagram, learning, literature, target, validation, video
+from hookbot.core import audience, breakout, corpus, instagram, learning, literature, niches, target, validation, video
 from hookbot.core.memory import METRIC_FIELDS
 from hookbot.engine import EngineError, HookEngine, HookInput
 
@@ -442,11 +442,41 @@ async def cmd_learn(message: Message, bot: Bot, **data: Any) -> None:
     await op_learn(ctx_for(message, bot, **data))
 
 
+def niche_status(memory: Any, niche_text: str) -> str:
+    """Which niche of the knowledge base a free-text niche maps to, and how much the base knows about it."""
+    niche = niches.resolve(niche_text)
+    if not niche:
+        return "В базе ниш такой пока нет: оценки опираются на общие данные и науку."
+    model = breakout.latest(memory, niche)
+    if not model:
+        return f"Ниша базы: <b>{html.escape(niches.name(niche))}</b> — модели залёта пока нет, данные собираются."
+    return (f"Ниша базы: <b>{html.escape(niches.name(niche))}</b> — модель на {model['n']} роликах "
+            f"{model['n_creators']} авторов, качество прогноза: {model['quality']}.")
+
+
 @router.message(Command("niche"))
-async def cmd_niche(message: Message, command: CommandObject, state: FSMContext, botdb: BotStorage, **_: Any) -> None:
-    if command.args:
-        botdb.memory.update_profile(workspace_of(message.from_user.id), niche=command.args.strip()[:200])
-        await message.answer(f"✅ Ниша сохранена: {html.escape(command.args.strip()[:200])}")
+async def cmd_niche(message: Message, command: CommandObject, state: FSMContext, botdb: BotStorage,
+                    **data: Any) -> None:
+    arg = (command.args or "").strip()
+    ws = workspace_of(message.from_user.id)
+    if arg.startswith("@"):
+        scout = data.get("scout")
+        if scout is None or scout.ig is None:
+            await message.answer("Определить нишу по аккаунту можно, когда к боту подключён Instagram. "
+                                 "Пока напишите нишу словами: /niche крипта и трейдинг")
+            return
+        try:
+            result = await asyncio.to_thread(niches.detect, scout.ig, arg)
+        except instagram.InstagramError as exc:
+            await message.answer(f"😕 Не удалось прочитать аккаунт: {html.escape(str(exc))}")
+            return
+        if result["best"]:
+            botdb.memory.update_profile(ws, niche=niches.name(result["best"]))
+        await message.answer(render.render_niche_detect(result, breakout.available(botdb.memory)))
+        return
+    if arg:
+        botdb.memory.update_profile(ws, niche=arg[:200])
+        await message.answer(f"✅ Ниша сохранена: {html.escape(arg[:200])}\n{niche_status(botdb.memory, arg)}")
         return
     await state.set_state(Flow.niche)
     await message.answer(texts.ASK_NICHE)
@@ -818,7 +848,8 @@ async def on_niche(message: Message, state: FSMContext, botdb: BotStorage, **_: 
     await state.clear()
     niche = message.text.strip()[:200]
     botdb.memory.update_profile(workspace_of(message.from_user.id), niche=niche)
-    await message.answer(f"✅ Ниша сохранена: {html.escape(niche)}", reply_markup=kb.main_menu())
+    await message.answer(f"✅ Ниша сохранена: {html.escape(niche)}\n{niche_status(botdb.memory, niche)}",
+                         reply_markup=kb.main_menu())
 
 
 FLOW_OPS = {Flow.score.state: "score", Flow.generate.state: "generate", Flow.rewrite.state: "rewrite", Flow.actions.state: "actions"}

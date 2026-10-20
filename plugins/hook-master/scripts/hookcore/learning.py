@@ -23,7 +23,7 @@ from typing import Any, Sequence
 
 from datetime import datetime, timezone
 
-from . import audience, corpus, knowledge, literature, stats, target
+from . import audience, breakout, corpus, knowledge, literature, niches, stats, target
 from .memory import MemoryStore
 
 MIN_RESULTS = 5
@@ -263,6 +263,7 @@ class LearningContext:
     literature: str = ""
     audience: str = ""
     target: str = ""
+    niche_model: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -330,8 +331,11 @@ class LearningContext:
         if self.target:
             lines += ["", self.target]
 
+        if self.niche_model:
+            lines += ["", niche_model_block(self.niche_model)]
+
         if self.science:
-            where = f"ниша «{self.corpus_niche}»" if self.corpus_niche else "все ниши"
+            where = f"ниша «{niches.name(self.corpus_niche)}»" if self.corpus_niche else "все ниши"
             lines += ["", f"### Что показал корпус залетевших роликов ({where}, сравнение с обычными роликами тех же авторов)"]
             for item in self.science:
                 diff = f", разница {item['diff']:+}" if item.get("diff") is not None else ""
@@ -354,6 +358,23 @@ class LearningContext:
         return "\n".join(lines)
 
 
+def niche_model_block(model: dict[str, Any]) -> str:
+    """What the niche's breakout model says, for the prompt."""
+    crit = knowledge.names("criterion")
+    up, down = breakout.top_drivers(model)
+    among = ("среди залетевших роликов ниши (насколько большим бывает залёт)" if model["sample"] == "breakouts_only"
+             else "залетевшие и обычные ролики ниши")
+    lines = [f"### Модель ниши «{model.get('niche_name') or niches.name(model['niche'])}»",
+             f"- Данные: {model['n']} роликов, {model['n_creators']} авторов; {among}; медиана отрыва {model['median_x']}×.",
+             f"- Качество прогноза на новых авторах: {model['quality']} (Spearman {model['cv']['spearman']}). "
+             "Используй как ориентир для сравнения вариантов, не как обещание."]
+    if up:
+        lines.append("- С большим отрывом связаны: " + ", ".join(crit.get(c, c) for c in up))
+    if down:
+        lines.append("- С меньшим отрывом связаны: " + ", ".join(crit.get(c, c) for c in down))
+    return "\n".join(lines)
+
+
 def build_context(store: MemoryStore, workspace: str) -> LearningContext:
     rows = store.training_rows(workspace)
     best, worst = select_examples(rows)
@@ -362,7 +383,9 @@ def build_context(store: MemoryStore, workspace: str) -> LearningContext:
     niche = corpus.match_niche(store, profile["niche"])
     report = corpus.latest_report(store, niche)
     science = [s for s in (report or {}).get("synthesis", []) if s["status"] not in ("нет данных", "гипотеза")][:8]
+    niche_id = niches.canonical(profile["niche"])
     return LearningContext(
+        niche_model=breakout.latest(store, niche_id) if niche_id else None,
         science=science,
         trends=(report or {}).get("trends"),
         corpus_niche=niche,
@@ -385,7 +408,7 @@ def build_context(store: MemoryStore, workspace: str) -> LearningContext:
 
 
 def analyze(store: MemoryStore, workspace: str, criteria: dict[str, Any]) -> dict[str, Any]:
-    """Score + predicted hold for one set of rubric scores under the current calibration."""
+    """Score + predicted hold under the account's calibration, and the hook's breakout potential in its niche."""
     cal = calibrate(store, workspace)
     return {
         "score": cal.score(criteria),
@@ -393,4 +416,5 @@ def analyze(store: MemoryStore, workspace: str, criteria: dict[str, Any]) -> dic
         "calibration_scope": cal.scope,
         "calibration_n": cal.n,
         "calibration_mae": cal.mae,
+        "niche_potential": breakout.potential(store, store.get_profile(workspace)["niche"], criteria),
     }

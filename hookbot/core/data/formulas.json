@@ -1,0 +1,114 @@
+[
+  {
+    "id": "did_it_for_you",
+    "template": "Я [сделал дорогое/долгое/рискованное X], чтобы вам не пришлось",
+    "trigger_ids": ["authority_proof", "value_promise", "curiosity_gap"],
+    "example": "Я потратил 47 000 ₽ на таргет, чтобы вам не пришлось",
+    "best_for": "Эксперименты, обзоры, экспертные выводы"
+  },
+  {
+    "id": "stop_doing",
+    "template": "Перестань [привычное действие], если хочешь [желаемый результат]",
+    "trigger_ids": ["loss_aversion", "contrarian", "identity_callout"],
+    "example": "Перестань мыть курицу перед готовкой, если не хочешь отравиться",
+    "best_for": "Экспертиза, лайфхаки, развенчание мифов"
+  },
+  {
+    "id": "n_mistakes",
+    "template": "[N] ошибок, из-за которых ты [боль]",
+    "trigger_ids": ["specificity", "loss_aversion", "curiosity_gap"],
+    "example": "3 ошибки, из-за которых твои Reels не набирают больше 300 просмотров",
+    "best_for": "Обучающий контент, списки"
+  },
+  {
+    "id": "what_happens_when",
+    "template": "Вот что происходит, когда [действие/ситуация]",
+    "trigger_ids": ["curiosity_gap", "result_first"],
+    "example": "Вот что происходит с телом, если 30 дней не есть сахар",
+    "best_for": "Эксперименты, наука, челленджи"
+  },
+  {
+    "id": "nobody_talks",
+    "template": "Никто не говорит об этом, но [неочевидный факт]",
+    "trigger_ids": ["curiosity_gap", "novelty_urgency", "contrarian"],
+    "example": "Никто не говорит об этом, но ипотеку можно перекредитовать без банка-заёмщика",
+    "best_for": "Инсайды, экспертиза"
+  },
+  {
+    "id": "if_you_are",
+    "template": "Если ты [аудитория] и [ситуация/боль] — [стоп/смотри]",
+    "trigger_ids": ["identity_callout", "pattern_interrupt"],
+    "example": "Если ты фрилансер и клиенты пропадают после первого заказа — смотри",
+    "best_for": "Нишевые аудитории, B2B"
+  },
+  {
+    "id": "how_i_without",
+    "template": "Как я [результат] за [срок] без [ожидаемая боль/затрата]",
+    "trigger_ids": ["specificity", "value_promise", "authority_proof"],
+    "example": "Как я выучил 2000 английских слов за 2 месяца без репетитора",
+    "best_for": "Кейсы, личный опыт, трансформации"
+  },
+  {
+    "id": "price_vs_price",
+    "template": "[Объект] за [дешёвая цена] vs за [дорогая цена]",
+    "trigger_ids": ["visual_contrast", "question_hook", "challenge"],
+    "example": "Стейк за 300 ₽ vs стейк за 9 000 ₽ — найдите разницу",
+    "best_for": "Сравнения, обзоры, товары"
+  },
+  {
+    "id": "why_fact",
+    "template": "Почему [неожиданный факт]?",
+    "trigger_ids": ["question_hook", "curiosity_gap"],
+    "example": "Почему в казино никогда нет окон?",
+    "best_for": "Познавательный контент"
+  },
+  {
+    "id": "only_percent",
+    "template": "Только [N]% людей [знают/замечают/умеют] [X]",
+    "trigger_ids": ["challenge", "specificity", "curiosity_gap"],
+    "example": "Только 3% водителей знают, зачем эта кнопка",
+    "best_for": "Тесты, лайфхаки, развлекательный контент"
+  },
+  {
+    "id": "tried_for_days",
+    "template": "Я [делал X] [N] дней — вот что произошло",
+    "trigger_ids": ["result_first", "curiosity_gap", "specificity"],
+    "example": "Я вставал в 5 утра 30 дней — вот что произошло с моим доходом",
+    "best_for": "Челленджи, эксперименты, лайфстайл"
+  },
+  {
+    "id": "doing_it_wrong",
+    "template": "Ты неправильно [привычное действие]",
+    "trigger_ids": ["contrarian", "loss_aversion", "pattern_interrupt"],
+    "example": "Ты неправильно чистишь апельсин всю жизнь",
+    "best_for": "Лайфхаки, бытовые темы"
+  },
+  {
+    "id": "save_this",
+    "template": "Сохрани, если [ситуация, в которой это пригодится]",
+    "trigger_ids": ["value_promise", "identity_callout"],
+    "example": "Сохрани, если собираешься просить повышение в этом году",
+    "best_for": "Полезные подборки, чек-листы (сильно влияет на сохранения)"
+  },
+  {
+    "id": "pov",
+    "template": "POV: ты [узнаваемая ситуация ЦА]",
+    "trigger_ids": ["identity_callout", "humor_absurd", "story_open"],
+    "example": "POV: ты маркетолог, и директор просит «сделать вирусное видео» к пятнице",
+    "best_for": "Развлекательный и вовлекающий контент"
+  },
+  {
+    "id": "reason_you_dont",
+    "template": "Вот почему у тебя [нет желаемого результата]",
+    "trigger_ids": ["identity_callout", "curiosity_gap", "loss_aversion"],
+    "example": "Вот почему у тебя не растут подписчики, хотя ты постишь каждый день",
+    "best_for": "Экспертный и продающий контент"
+  },
+  {
+    "id": "conflict_start",
+    "template": "[Момент конфликта/кульминации истории одной фразой]",
+    "trigger_ids": ["story_open", "face_emotion"],
+    "example": "Клиент отказался платить 400 000 за уже сделанный проект",
+    "best_for": "Сторителлинг, личный бренд"
+  }
+]

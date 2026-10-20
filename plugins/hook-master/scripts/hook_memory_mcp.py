@@ -18,11 +18,12 @@ from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from hookcore import audience, corpus, instagram, knowledge, learning, target, validation, video  # noqa: E402
+from hookcore import (audience, breakout, corpus, instagram, knowledge, learning, niches, outliers, target,  # noqa: E402
+                      validation, video)
 from hookcore.memory import METRIC_FIELDS, MemoryStore  # noqa: E402
 
 SERVER_NAME = "hook-memory"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.4.0"
 SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 WORKSPACE = os.environ.get("HOOKBOT_WORKSPACE") or "local"
 
@@ -175,7 +176,7 @@ def tool_score_hook(args: dict[str, Any]) -> dict[str, Any]:
         score=analysis["score"],
         predicted_hold=hook["predicted_hold"],  # never back-fill a forecast after the fact
     )
-    return {"hook_id": hook["id"], "score": analysis["score"],
+    return {"hook_id": hook["id"], "score": analysis["score"], "niche_potential": analysis["niche_potential"],
             "calibration": _calibration_summary(learning.calibrate(STORE, WORKSPACE))}
 
 
@@ -268,16 +269,24 @@ def _reel_frames(reel: dict[str, Any]) -> dict[str, Any]:
             out.write_bytes(frame.jpeg)
             frames.append(str(out))
         return {"frames": frames, "video_facts": probe.facts_text()}
+    described = (f"\nОписание первых 3 секунд от источника:\n{reel['description']}"
+                 if reel.get("description") else "")
     if reel["thumbnail_url"]:
         thumb = instagram.download(reel["thumbnail_url"], folder / "cover.jpg", max_bytes=5 * 1024 * 1024)
-        return {"frames": [str(thumb)], "video_facts": "Доступна только обложка: видео скачать нельзя."}
-    raise video.VideoError("Нет ни видео, ни обложки")
+        return {"frames": [str(thumb)], "video_facts": "Доступна только обложка: видео скачать нельзя." + described}
+    if described:
+        return {"frames": [], "video_facts": "Кадров нет." + described}
+    raise video.VideoError("Нет ни видео, ни обложки, ни описания")
 
 
 def tool_next_reels(args: dict[str, Any]) -> dict[str, Any]:
     scope, limit = args.get("scope", "own"), int(args.get("limit", 5))
     if scope == "own":
         queue = [r for r in audience.own_reels(STORE, WORKSPACE) if r["status"] in ("new", "failed")][:limit]
+    elif scope == "niche":
+        if not args.get("niche"):
+            raise ValueError("Для scope=niche укажите niche")
+        queue = CORPUS.queue(limit, niche=niches.canonical(args["niche"]))
     else:
         queue = CORPUS.queue(limit, niche=target.tag(WORKSPACE) if scope == "audience" else None)
     out, errors = [], []
@@ -402,6 +411,68 @@ def tool_instagram_check(args: dict[str, Any]) -> dict[str, Any]:
                          "(как получить — docs/INSTAGRAM_SETUP.md в репозитории плагина)")
     steps = instagram.check_connection(ig, discover_username=args.get("username"))
     return {"steps": steps, "ready": all(s["ok"] is not False for s in steps)}
+
+
+# --------------------------------------------------------------------------- #
+# Knowledge base by niche
+# --------------------------------------------------------------------------- #
+
+
+def _model_summary(model: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not model:
+        return None
+    up, down = breakout.top_drivers(model)
+    return {k: model.get(k) for k in ("niche", "niche_name", "n", "n_creators", "sample", "median_x", "quality",
+                                      "trained_at", "bundled")} | {"cv": model["cv"], "drivers_up": up,
+                                                                    "drivers_down": down}
+
+
+def tool_niche_detect(args: dict[str, Any]) -> dict[str, Any]:
+    if args.get("username"):
+        ig = _ig()
+        if ig is None:
+            raise ValueError("Instagram не подключён — передайте bio и captions вместо username")
+        result = niches.detect(ig, args["username"])
+    else:
+        result = {"username": "", **niches.classify(args.get("captions") or [], bio=args.get("bio") or "")}
+    models = breakout.available(STORE)
+    for item in result["niches"]:
+        item["model"] = _model_summary(models.get(item["id"]))
+    if args.get("set") and result["best"]:
+        STORE.update_profile(WORKSPACE, niche=niches.name(result["best"]))
+        result["profile_niche"] = niches.name(result["best"])
+    return result
+
+
+def tool_niche_list(args: dict[str, Any]) -> dict[str, Any]:
+    coverage, models = CORPUS.niche_coverage(), breakout.available(STORE)
+    return {"niches": [{"id": n["id"], "name": n["name"], "coverage": coverage.get(n["id"]),
+                        "model": _model_summary(models.get(n["id"])), "queries": n["queries"]}
+                       for n in niches.all_niches()],
+            "other": {k: v for k, v in coverage.items() if not niches.get(k)}}
+
+
+def tool_import_outliers(args: dict[str, Any]) -> dict[str, Any]:
+    text = outliers.load_text(args["path"]) if args.get("path") else args.get("text") or ""
+    items = outliers.parse(text, args.get("query", ""))
+    if not items:
+        raise ValueError("В ответе не найдено ни одного ролика (ожидается вывод vidIQ outlier search)")
+    counts = outliers.import_items(CORPUS, items, niches.canonical(args["niche"]))
+    return {**counts, "next": "next_reels со scope=niche и этой нишей — слепой разбор по описанию первых секунд; "
+                              "затем niche_model с rebuild=true"}
+
+
+def tool_niche_model(args: dict[str, Any]) -> dict[str, Any]:
+    niche, reason = niches.canonical(args["niche"]), None
+    if args.get("rebuild"):
+        model = breakout.build(STORE, niche)
+        if model is None:
+            reason = (f"мало данных для переобучения: нужно ≥{breakout.MIN_REELS} изученных роликов "
+                      f"от ≥{breakout.MIN_CREATORS} авторов; действует прежняя модель")
+        else:
+            breakout.save(STORE, model)
+    return {"niche": niche, "model": _model_summary(breakout.latest(STORE, niche)), "reason": reason,
+            "coverage": CORPUS.niche_coverage().get(niche)}
 
 
 def tool_validation(args: dict[str, Any]) -> dict[str, Any]:
@@ -574,9 +645,10 @@ TOOLS += [
     (
         "next_reels",
         "Следующие ролики для слепого разбора: кадры первых 3 с (пути к JPEG), измеренные факты о звуке и склейках, "
-        "подпись. Без просмотров и меток — оценивай вслепую. scope: own — свои ролики, audience — авторы вашей "
-        "аудитории, corpus — все отслеживаемые.",
-        {"type": "object", "properties": {"scope": {"type": "string", "enum": ["own", "audience", "corpus"]},
+        "подпись (для роликов из vidIQ — описание первых 3 секунд вместо кадров). Без просмотров и меток — оценивай "
+        "вслепую. scope: own — свои ролики, audience — авторы вашей аудитории, corpus — все, niche — одна ниша базы.",
+        {"type": "object", "properties": {"scope": {"type": "string", "enum": ["own", "audience", "corpus", "niche"]},
+                                          "niche": {"type": "string", "description": "для scope=niche: id или название ниши"},
                                           "limit": {"type": "integer"}}},
         tool_next_reels,
     ),
@@ -636,6 +708,41 @@ TOOLS += [
         "это с вашим аудитом и наукой. Обновляет выводы, которые учитываются во всех оценках.",
         {"type": "object", "properties": {}},
         tool_gap_report,
+    ),
+    (
+        "niche_detect",
+        "Определить нишу канала клиента по описанию профиля и подписям (username — через подключённый Instagram, "
+        "или bio и captions вручную). Возвращает ниши базы с долей публикаций, уверенность и есть ли для ниши модель. "
+        "set=true — записать нишу в профиль: дальше оценка и генерация хуков опираются на базу этой ниши.",
+        {"type": "object", "properties": {"username": {"type": "string"}, "bio": {"type": "string"},
+                                          "captions": {"type": "array", "items": {"type": "string"}},
+                                          "set": {"type": "boolean"}}},
+        tool_niche_detect,
+    ),
+    (
+        "niche_list",
+        "База знаний по нишам: сколько роликов собрано и изучено, есть ли модель залёта и её качество, "
+        "поисковые запросы для сбора ниши (vidIQ outlier search, поиск Instagram).",
+        {"type": "object", "properties": {}},
+        tool_niche_list,
+    ),
+    (
+        "import_outliers",
+        "Добавить в базу ниши залетевшие ролики из ответа vidIQ instagram_tiktok_outlier_search: path — файл, куда "
+        "сохранён ответ, или text. Сохраняются просмотры, медиана автора и описание первых 3 секунд (для слепого "
+        "разбора). Такие ролики не входят в медиану автора: индекс отбирает только залетевшие.",
+        {"type": "object", "properties": {"path": {"type": "string"}, "text": {"type": "string"},
+                                          "niche": {"type": "string"}, "query": {"type": "string"}},
+         "required": ["niche"]},
+        tool_import_outliers,
+    ),
+    (
+        "niche_model",
+        "Модель залёта ниши: во сколько раз выше медианы автора уходят ролики с похожими хуками, проверка на авторах, "
+        "которых модель не видела (Spearman, верхняя и нижняя пятая). rebuild=true — переобучить на изученных роликах.",
+        {"type": "object", "properties": {"niche": {"type": "string"}, "rebuild": {"type": "boolean"}},
+         "required": ["niche"]},
+        tool_niche_model,
     ),
     (
         "validation_report",

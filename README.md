@@ -5,14 +5,15 @@ Instagram показывает авторам **skip rate** — долю зри�
 Один движок — три интерфейса:
 
 - **Telegram-бот** для продажи (пакеты анализов за Telegram Stars);
-- **плагин для Claude** (Claude Code / Cowork) — 8 навыков и MCP-сервер памяти;
+- **плагин для Claude** (Claude Code / Cowork) — 9 навыков и MCP-сервер памяти;
 - **CLI** для локальной работы и тестов.
 
 ## Что умеет
 
 | Функция | Бот | Плагин | CLI |
 |---|---|---|---|
-| 🎯 Оценка хука по 9 критериям и 18 психологическим триггерам, прогноз удержания 3 с | хук текстом или `/score` | `/hook-master:hook-score` | `hookbot score` |
+| 🧭 Ниша клиента по его каналу → база знаний этой ниши (модель залёта на чужих роликах) | `/niche @аккаунт` | `/hook-master:hook-niche` | `hookbot niche detect`, `hookbot niche list` |
+| 🎯 Оценка хука по 9 критериям и 18 психологическим триггерам, прогноз удержания 3 с и потенциал залёта в нише | хук текстом или `/score` | `/hook-master:hook-score` | `hookbot score` |
 | 📹 Разбор видео: кадры 0–3 с, когда начинается звук, склейки | пришлите ролик | путь к видео в `hook-score` | `hookbot score --video` |
 | ✨ Генерация хуков по сценарию | `/generate` | `/hook-master:hook-generate` | `hookbot generate` |
 | ♻️ Переписать старый хук | `/rewrite` | `/hook-master:hook-rewrite` | `hookbot rewrite` |
@@ -27,6 +28,7 @@ Instagram показывает авторам **skip rate** — долю зри�
 ## Документация
 
 - [**Психология первых 3 секунд**](docs/PSYCHOLOGY.md) — приёмы, механизмы, таймлайн, звук/действие/текст.
+- [**База знаний по нишам**](docs/NICHES.md) — ниши, определение ниши клиента, сбор ниши, модель залёта и её честная проверка.
 - [**Научный подход**](docs/METHODOLOGY.md) — уровни доказательности, свежие исследования, корпус залетевших, аудит канала, целевая аудитория, проверка точности и ограничения.
 - [**Как оценщик учится**](docs/SELF_LEARNING.md) — калибровка рубрики, влияние триггеров, плейбук, робот-разведчик, автономные напоминания.
 - [**Подключение Instagram**](docs/INSTAGRAM_SETUP.md) — официальный API, Apify (без Facebook) или файлы; проверка `hookbot ig-check`.
@@ -71,7 +73,8 @@ python -m telegram_bot
 ```bash
 pip install -e .
 export ANTHROPIC_API_KEY=...
-hookbot profile --niche "финансы для фрилансеров"
+hookbot niche detect @client --set          # ниша клиента по его каналу (или --text с подписями)
+hookbot profile --niche "финансы для фрилансеров"   # или вручную
 hookbot score "Хотите больше клиентов?" --visual "говорящая голова"
 hookbot score "Я слил 47 000 на таргет" --video reel.mp4
 hookbot generate script.txt
@@ -90,7 +93,8 @@ hookbot gap
 ```
 hookbot/core/        stdlib-ядро: база знаний (data/*.json, 65 источников), память SQLite,
                      самообучение, разбор видео через ffmpeg, статистика, корпус
-                     залетевших, Instagram Graph API, аудит канала, целевая аудитория
+                     залетевших, Instagram, аудит канала, целевая аудитория,
+                     ниши (niches.py) и модели залёта ниш (breakout.py)
 hookbot/scout.py     робот-разведчик: сбор → слепой разбор → выводы → переобучение
 hookbot/engine.py    функции оценщика на Claude API (structured outputs,
                      кэш системного промпта, server-side fallbacks)
