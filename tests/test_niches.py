@@ -255,3 +255,41 @@ def test_plugin_niche_tools(server, tmp_path):  # noqa: F811
 
     hook = call(server, "save_evaluation", text="Показываю один раз", criteria={cid: 6 for cid in knowledge.criterion_ids()})
     assert hook["niche_potential"]["niche"] == "crypto_trading"
+
+
+def synthetic_feeds(n_creators=15, per_creator=10, seed=5):
+    """Creators' whole feeds: big and small accounts; within a feed, curiosity decides which reel takes off."""
+    rng = random.Random(seed)
+    ids = knowledge.criterion_ids()
+    pack = []
+    for c in range(n_creators):
+        size = rng.choice([300, 3000, 30000])
+        for i in range(per_creator):
+            criteria = {cid: rng.randint(2, 8) for cid in ids}
+            multiple = 10 ** (0.15 * (criteria["curiosity"] - 5) + rng.gauss(0, 0.08))
+            pack.append({"source": "instagram", "external_id": f"f{c}r{i}", "creator": f"ig:feed{c}",
+                         "niche": "crypto_trading", "views": int(size * multiple), "feed": True,
+                         "published_at": "2026-09-01T12:00:00+00:00",
+                         "analysis": {"criteria": criteria, "input": "cover", "topic": "crypto"}})
+    pack[0]["analysis"]["topic"] = "other"  # a creator's off-topic reel is left out of the niche's knowledge
+    return pack
+
+
+def test_within_creator_model(store):
+    c = Corpus(store)
+    c.import_pack(synthetic_pack())  # breakouts described in text (the outlier index)
+    c.import_pack(synthetic_feeds())  # whole feeds rated from cover frames
+    model = breakout.build(store, "crypto_trading")
+    assert model["input"] == "description" and model["n"] == 90  # one rating input per model
+    within = model["within"]
+    # Each creator is compared with themselves, within one rating input: 15 feeds and 15 creators' breakouts.
+    assert within["inputs"] == {"description": 90, "cover": 149} and within["n_creators"] == 30
+    assert within["quality"] == "сильная" and within["cv"]["auc"] > 0.65
+    assert "curiosity" in breakout.top_drivers(model, within=True)[0][:2]
+    better = breakout.predict(model, {"curiosity": 9})["vs_typical"]
+    worse = breakout.predict(model, {"curiosity": 2})["vs_typical"]
+    assert better["x"] > 1 > worse["x"] and better["n_creators"] == 30
+    # Only feeds rated from frames: the main model is trained on them.
+    other = corpus.MemoryStore(":memory:")
+    Corpus(other).import_pack(synthetic_feeds())
+    assert breakout.build(other, "crypto_trading")["input"] == "cover"

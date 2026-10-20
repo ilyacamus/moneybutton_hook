@@ -267,6 +267,10 @@ async def _niche(args: argparse.Namespace, store: MemoryStore, ws: str, f: type[
             print(f"{model['niche_name']}: {model['n']} роликов, {model['n_creators']} авторов; качество {model['quality']} "
                   f"(Spearman {cv['spearman']}, 95% ДИ {cv['spearman_ci']}); прогноз: верхняя пятая "
                   f"{cv['top_fifth_median_x']}× против нижней {cv['bottom_fifth_median_x']}×")
+            if model.get("within"):
+                w = model["within"]
+                print(f"  автор против себя: {w['n']} роликов, {w['n_creators']} авторов; качество {w['quality']} "
+                      f"(Spearman {w['cv']['spearman']}, ДИ {w['cv']['spearman_ci']}, AUC {w['cv']['auc']})")
             if args.bundle:
                 path = breakout.BUNDLED_DIR / f"{niche}.json"
                 path.parent.mkdir(parents=True, exist_ok=True)

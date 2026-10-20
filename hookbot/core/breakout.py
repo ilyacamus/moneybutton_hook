@@ -20,6 +20,14 @@ When a niche's reels come only from an outlier index (every reel ≥3× its
 creator's median), the model ranks hooks *among breakouts* — how big a
 breakout tends to be — rather than viral vs. ordinary. ``sample`` says which.
 
+**Within-creator model.** Where creators' feeds were collected (their
+ordinary reels next to their breakouts), a second model compares each
+creator with themselves: criteria and log multiple are centred on the
+creator's own means, so a strong creator no longer looks like a strong hook.
+It answers "how much better than this author's usual hook". Reels rated
+from different inputs (a text description, a cover frame, video frames) are
+never compared with each other: the input changes the ratings.
+
 Models are trained per niche on the corpus and stored as insights. A model
 trained elsewhere can be shipped in ``data/niche_models/<niche>.json`` (only
 aggregate numbers: coefficients, quantiles, validation metrics; no reels).
@@ -30,6 +38,7 @@ from __future__ import annotations
 import json
 import math
 import random
+from collections import Counter, defaultdict
 from typing import Any
 
 from . import knowledge, niches, stats
@@ -44,6 +53,8 @@ MIN_CREATORS = 10
 FOLDS = 5
 RIDGE = 50.0
 SEED = 7
+WITHIN_MIN_REELS = 5  # a creator's reels rated from the same input, to compare the creator with themselves
+PREFERRED_INPUT = "description"  # closest to how a hook written for a script is rated: from text
 QUALITY = ((0.35, "сильная"), (0.2, "умеренная"), (0.1, "слабая"))
 
 
@@ -54,16 +65,26 @@ def quality(rho: float | None) -> str:
     return "нет сигнала"
 
 
+def rating_input(reel: dict[str, Any]) -> str:
+    """What the blind rater saw: a text description of the first seconds, a cover frame, or video frames."""
+    analysis = reel["analysis"] or {}
+    return analysis.get("input") or ("description" if reel.get("description") else "frames")
+
+
 def training_rows(store: MemoryStore, niche: str) -> list[dict[str, Any]]:
-    """Studied reels of other creators in the niche with rubric criteria and a within-creator multiple."""
+    """Studied on-topic reels of other creators in the niche with rubric criteria and a within-creator multiple."""
     ids = knowledge.criterion_ids()
     rows = []
     for r in Corpus(store).niche_rows(niche):
-        criteria = (r["analysis"] or {}).get("criteria") or {}
+        analysis = r["analysis"] or {}
+        criteria = analysis.get("criteria") or {}
         if not r["outlier_score"] or r["outlier_score"] <= 0 or not r["creator"] or not criteria:
             continue
+        if analysis.get("topic") == "other":  # a creator's off-topic reel says nothing about the niche's hooks
+            continue
         rows.append({"x": [float(criteria[c]) if c in criteria else None for c in ids],
-                     "y": math.log10(r["outlier_score"]), "creator": r["creator"], "label": r["label"]})
+                     "y": math.log10(r["outlier_score"]), "creator": r["creator"], "label": r["label"],
+                     "input": rating_input(r)})
     # Missing criteria get the niche mean, so a partial analysis still counts.
     for j in range(len(ids)):
         present = [r["x"][j] for r in rows if r["x"][j] is not None]
@@ -72,6 +93,21 @@ def training_rows(store: MemoryStore, niche: str) -> list[dict[str, Any]]:
             if r["x"][j] is None:
                 r["x"][j] = fill
     return rows
+
+
+def within_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each creator compared with themselves: criteria and log multiple minus the creator's own means."""
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        groups[(r["creator"], r["input"])].append(r)
+    out = []
+    for group in groups.values():
+        if len(group) < WITHIN_MIN_REELS:
+            continue
+        mx = [stats.mean([r["x"][j] for r in group]) for j in range(len(group[0]["x"]))]
+        my = stats.mean([r["y"] for r in group])
+        out += [{**r, "x": [v - m for v, m in zip(r["x"], mx)], "y": r["y"] - my, "raw_x": r["x"]} for r in group]
+    return out
 
 
 def fit(rows: list[dict[str, Any]], ridge: float = RIDGE) -> dict[str, Any]:
@@ -98,6 +134,7 @@ def cross_validate(rows: list[dict[str, Any]], folds: int = FOLDS, seed: int = S
     random.Random(seed).shuffle(creators)
     fold_of = {c: i % folds for i, c in enumerate(creators)}
     pairs: list[tuple[float, float, str]] = []
+    labels: list[str | None] = []
     for k in range(folds):
         train = [r for r in rows if fold_of[r["creator"]] != k]
         test = [r for r in rows if fold_of[r["creator"]] == k]
@@ -105,6 +142,7 @@ def cross_validate(rows: list[dict[str, Any]], folds: int = FOLDS, seed: int = S
             continue
         model = fit(train)
         pairs += [(_raw(model, r["x"]), r["y"], r["creator"]) for r in test]
+        labels += [r["label"] for r in test]
     rho = stats.spearman([p for p, _, _ in pairs], [y for _, y, _ in pairs])
 
     # Creator bootstrap: reels of one creator are not independent, so resample creators, not reels.
@@ -122,20 +160,28 @@ def cross_validate(rows: list[dict[str, Any]], folds: int = FOLDS, seed: int = S
     fifth = max(1, len(order) // 5)
     bottom = [10 ** pairs[i][1] for i in order[:fifth]]
     top = [10 ** pairs[i][1] for i in order[-fifth:]]
+    # Viral vs. ordinary reels: how often the prediction ranks a viral reel above an ordinary one.
+    viral = [p for (p, _, _), label in zip(pairs, labels) if label == "viral"]
+    control = [p for (p, _, _), label in zip(pairs, labels) if label in CONTROL_LABELS]
     return {
         "folds": folds,
         "n": len(pairs),
         "spearman": round(rho, 3) if rho is not None else None,
         "spearman_ci": [round(lo, 3), round(hi, 3)] if not math.isnan(lo) else None,
-        "top_fifth_median_x": round(stats.median(top), 1),
-        "bottom_fifth_median_x": round(stats.median(bottom), 1),
+        "top_fifth_median_x": round(stats.median(top), 2),
+        "bottom_fifth_median_x": round(stats.median(bottom), 2),
+        "auc": round(stats.auc(viral, control), 3) if len(viral) >= 5 and len(control) >= 5 else None,
     }
 
 
 def build(store: MemoryStore, niche: str) -> dict[str, Any] | None:
     """Train and validate the niche's model; None when the niche has too little data."""
     niche = niches.canonical(niche)
-    rows = training_rows(store, niche)
+    all_rows = training_rows(store, niche)
+    # One rating input per model: mixing a text description with a cover frame would mix rating scales.
+    inputs = Counter(r["input"] for r in all_rows)
+    main = PREFERRED_INPUT if inputs[PREFERRED_INPUT] >= MIN_REELS else (inputs.most_common(1) or [("", 0)])[0][0]
+    rows = [r for r in all_rows if r["input"] == main]
     n_creators = len({r["creator"] for r in rows})
     if len(rows) < MIN_REELS or n_creators < MIN_CREATORS:
         return None
@@ -148,11 +194,21 @@ def build(store: MemoryStore, niche: str) -> dict[str, Any] | None:
         "niche": niche,
         "niche_name": niches.name(niche),
         "trained_at": now_iso(),
+        "input": main,
         "n": len(rows),
         "n_creators": n_creators,
         "labels": labels,
         "sample": "breakouts_only" if controls == 0 else "mixed",
         "median_x": round(10 ** stats.median([r["y"] for r in rows]), 1),
+        **_export(model, in_sample),
+        "cv": cv,
+        "quality": quality(cv["spearman"]),
+        "within": build_within(all_rows),
+    }
+
+
+def _export(model: dict[str, Any], predictions: list[float]) -> dict[str, Any]:
+    return {
         "criteria": model["criteria"],
         "means": [round(v, 4) for v in model["means"]],
         "sds": [round(v, 4) for v in model["sds"]],
@@ -160,7 +216,26 @@ def build(store: MemoryStore, niche: str) -> dict[str, Any] | None:
         "coef": [round(v, 5) for v in model["coef"]],
         "ridge": model["ridge"],
         "weights": {c: round(v, 4) for c, v in zip(model["criteria"], model["coef"])},
-        "quantiles": [round(stats.quantile(in_sample, q / 100), 5) for q in range(101)],
+        "quantiles": [round(stats.quantile(predictions, q / 100), 5) for q in range(101)],
+    }
+
+
+def build_within(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The within-creator model: which hooks do better than the same author's other reels."""
+    rows = within_rows(rows)
+    n_creators = len({r["creator"] for r in rows})
+    if len(rows) < MIN_REELS or n_creators < MIN_CREATORS:
+        return None
+    cv = cross_validate(rows)
+    model = fit(rows)
+    raw_means = [stats.mean([r["raw_x"][j] for r in rows]) for j in range(len(model["criteria"]))]
+    return {
+        "n": len(rows),
+        "n_creators": n_creators,
+        "inputs": dict(Counter(r["input"] for r in rows)),
+        "labels": {lbl: sum(1 for r in rows if r["label"] == lbl) for lbl in ("viral", "above", "typical", "flop")},
+        **_export(model, sorted(_raw(model, r["x"]) for r in rows)),
+        "typical_hook": [round(v, 4) for v in raw_means],  # the niche's average hook stands in for "the author's usual"
         "cv": cv,
         "quality": quality(cv["spearman"]),
     }
@@ -207,7 +282,7 @@ def predict(model: dict[str, Any], criteria: dict[str, Any]) -> dict[str, Any] |
         return None
     x = [float(criteria[c]) if c in criteria else m for c, m in zip(model["criteria"], model["means"])]
     raw = _raw(model, x)
-    return {
+    out = {
         "niche": model["niche"],
         "niche_name": model.get("niche_name") or niches.name(model["niche"]),
         "expected_x": round(10 ** raw, 1),
@@ -219,6 +294,16 @@ def predict(model: dict[str, Any], criteria: dict[str, Any]) -> dict[str, Any] |
         "n_creators": model["n_creators"],
         "sample": model["sample"],
     }
+    within = model.get("within")
+    if within:
+        # Deviation from the niche's average hook, scored by the within-creator model.
+        typical = within["typical_hook"]
+        xw = [float(criteria[c]) if c in criteria else t for c, t in zip(within["criteria"], typical)]
+        delta = sum(c * (v - t) / s for c, v, t, s in zip(within["coef"], xw, typical, within["sds"]))
+        out["vs_typical"] = {"x": round(10 ** delta, 2), "quality": within["quality"],
+                             "cv_spearman": within["cv"]["spearman"], "auc": within["cv"].get("auc"),
+                             "n": within["n"], "n_creators": within["n_creators"]}
+    return out
 
 
 def potential(store: MemoryStore, niche_text: str, criteria: dict[str, Any]) -> dict[str, Any] | None:
@@ -227,9 +312,12 @@ def potential(store: MemoryStore, niche_text: str, criteria: dict[str, Any]) -> 
     return predict(latest(store, niche), criteria) if niche else None
 
 
-def top_drivers(model: dict[str, Any], k: int = 3) -> tuple[list[str], list[str]]:
-    """Criteria that raise and lower the expected breakout most in this niche."""
-    ranked = sorted(model["weights"].items(), key=lambda kv: kv[1], reverse=True)
+def top_drivers(model: dict[str, Any], k: int = 3, *, within: bool = False) -> tuple[list[str], list[str]]:
+    """Criteria that raise and lower the expected breakout most in this niche (``within``: vs. the same author)."""
+    source = model.get("within") if within else model
+    if not source:
+        return [], []
+    ranked = sorted(source["weights"].items(), key=lambda kv: kv[1], reverse=True)
     up = [c for c, w in ranked if w > 0.005][:k]
     down = [c for c, w in reversed(ranked) if w < -0.005][:k]
     return up, down

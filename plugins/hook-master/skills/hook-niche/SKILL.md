@@ -41,6 +41,8 @@ argument-hint: "[@аккаунт клиента | описание ниши]"
 🎯 Модель залёта: качество <quality> (Spearman <cv.spearman>, ДИ <cv.spearman_ci>),
    верхняя пятая прогноза — <top_fifth_median_x>×, нижняя — <bottom_fifth_median_x>×
 ↑ С большим отрывом связаны: <drivers_up>   ↓ С меньшим: <drivers_down>
+👤 Автор против себя (если есть within_creator): <n> роликов, качество <quality>, AUC <cv.auc>;
+   у одного автора лучше заходят хуки, где выше: <drivers_up>
 ```
 
 Дальше: хуки под сценарий — `/hook-master:hook-generate`, оценка хука — `/hook-master:hook-score`. В обоих ответах будет `niche_potential` по этой нише.

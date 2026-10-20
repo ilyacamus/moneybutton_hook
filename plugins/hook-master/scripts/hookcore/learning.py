@@ -372,6 +372,13 @@ def niche_model_block(model: dict[str, Any]) -> str:
         lines.append("- С большим отрывом связаны: " + ", ".join(crit.get(c, c) for c in up))
     if down:
         lines.append("- С меньшим отрывом связаны: " + ", ".join(crit.get(c, c) for c in down))
+    within = model.get("within")
+    if within:
+        up, down = breakout.top_drivers(model, within=True)
+        lines.append(f"- Автор против самого себя ({within['n']} роликов, {within['n_creators']} авторов; "
+                     f"качество {within['quality']}, Spearman {within['cv']['spearman']}): у одного и того же автора "
+                     "лучше заходят хуки, где выше " + (", ".join(crit.get(c, c) for c in up) or "—")
+                     + ("; хуже — где выше " + ", ".join(crit.get(c, c) for c in down) if down else ""))
     return "\n".join(lines)
 
 

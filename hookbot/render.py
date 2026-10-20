@@ -267,7 +267,11 @@ def render_potential(p: dict[str, Any], f: type[Plain] = HTML) -> list[str]:
         f"Сильнее, чем {p['percentile']}% {among} (медиана {p['median_x']:g}×).",
         f.i(f"Модель: {p['n']} роликов, {p['n_creators']} авторов; качество прогноза — {p['quality']} "
             f"(Spearman {p['cv_spearman']} на авторах, которых модель не видела). Ориентир для сравнения вариантов."),
-    ]
+    ] + ([
+        f"👤 Против обычного хука автора: ≈{p['vs_typical']['x']:g}× "
+        + f.i(f"(сравнение автора с самим собой: {p['vs_typical']['n']} роликов, {p['vs_typical']['n_creators']} авторов; "
+              f"качество — {p['vs_typical']['quality']}, Spearman {p['vs_typical']['cv_spearman']})"),
+    ] if p.get("vs_typical") else [])
 
 
 def render_niche_detect(result: dict[str, Any], models: dict[str, dict[str, Any]], f: type[Plain] = HTML) -> str:
@@ -294,6 +298,9 @@ def render_niches(rows: list[dict[str, Any]], f: type[Plain] = HTML) -> str:
         model = r.get("model")
         status = (f"модель: {model['n']} роликов, {model['n_creators']} авторов, качество {model['quality']} "
                   f"(ρ={model['cv']['spearman']})" + (", встроенная" if model.get("bundled") else "")) if model else "модели нет"
+        if model and model.get("within"):
+            w = model["within"]
+            status += f"; автор против себя: {w['n']} роликов, качество {w['quality']} (ρ={w['cv']['spearman']})"
         cov = r.get("coverage") or {}
         collected = f"собрано {cov.get('reels', 0)}, изучено {cov.get('studied', 0)}" if cov else "не собрано"
         lines.append(f"• {f.b(f.esc(r['name']))} ({r['id']}): {collected}; {status}")

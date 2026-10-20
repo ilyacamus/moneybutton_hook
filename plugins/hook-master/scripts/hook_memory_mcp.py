@@ -422,9 +422,15 @@ def _model_summary(model: dict[str, Any] | None) -> dict[str, Any] | None:
     if not model:
         return None
     up, down = breakout.top_drivers(model)
-    return {k: model.get(k) for k in ("niche", "niche_name", "n", "n_creators", "sample", "median_x", "quality",
-                                      "trained_at", "bundled")} | {"cv": model["cv"], "drivers_up": up,
-                                                                    "drivers_down": down}
+    summary = {k: model.get(k) for k in ("niche", "niche_name", "input", "n", "n_creators", "sample", "median_x",
+                                         "quality", "trained_at", "bundled")} | {"cv": model["cv"], "drivers_up": up,
+                                                                                 "drivers_down": down}
+    within = model.get("within")
+    if within:
+        w_up, w_down = breakout.top_drivers(model, within=True)
+        summary["within_creator"] = {k: within[k] for k in ("n", "n_creators", "inputs", "quality", "cv")} | {
+            "drivers_up": w_up, "drivers_down": w_down}
+    return summary
 
 
 def tool_niche_detect(args: dict[str, Any]) -> dict[str, Any]:
