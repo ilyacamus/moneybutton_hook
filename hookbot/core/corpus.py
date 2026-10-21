@@ -166,6 +166,7 @@ class Corpus:
         source is used when the creator has too few reels in the corpus.
         Reels picked by outcome (``feed = 0``, e.g. from an outlier index) never
         enter a baseline: a median of breakouts would make every reel look ordinary.
+        They keep the baseline their source supplied.
         """
         now = now or datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=mature_hours)
@@ -183,7 +184,11 @@ class Corpus:
             mature = [r for r in reels if r["mature"]]
             for r in mature:
                 others = [o["views"] for o in mature if o["id"] != r["id"] and o["feed"]]
-                if creator and len(others) >= MIN_CREATOR_REELS - 1:
+                if not r["feed"] and r["baseline_views"]:
+                    # Picked by outcome: keep the source's baseline (an outlier index's median over the creator's
+                    # history). A median of the few latest feed reels, some still gathering views, is not comparable.
+                    baseline = r["baseline_views"]
+                elif creator and len(others) >= MIN_CREATOR_REELS - 1:
                     baseline = stats.median(others)
                 else:
                     baseline = r["baseline_views"]

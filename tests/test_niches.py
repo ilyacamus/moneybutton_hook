@@ -96,7 +96,7 @@ def test_outlier_reels_never_enter_a_baseline(store):
     assert [r["baseline_views"] for r in feed] == [1250.0, 1250.0, 1200.0, 1150.0, 1150.0]
     viral = c.find("instagram", "DcqLI2ovmh0")
     assert viral["feed"] == 0 and viral["niche"] == "crypto_trading" and viral["label"] == "viral"
-    assert viral["outlier_score"] == round(134_100 / 1200, 3)  # the creator's feed median, not the index's
+    assert viral["outlier_score"] == round(134_100 / 998.5, 3)  # the index's median over the creator's history
     alone = c.find("instagram", "DcS114mOggm")
     assert alone["outlier_score"] == round(1_200_000 / 54_000, 3)  # no feed yet: the index's median
     assert feed[0]["niche"] == "crypto_trading"  # free-text niches are stored as the taxonomy id
