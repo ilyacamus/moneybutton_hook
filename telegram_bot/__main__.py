@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -18,7 +19,8 @@ import anthropic
 
 from hookbot.core import breakout, instagram, niches
 from hookbot.core.memory import MemoryStore
-from hookbot.engine import DEFAULT_MODEL, HookEngine
+from hookbot import claude_code
+from hookbot.engine import DEFAULT_MODEL, HookEngine, default_client
 from hookbot.scout import Scout, ScoutConfig
 from hookbot.transcribe import make_transcriber
 
@@ -51,14 +53,35 @@ def commands(settings: Settings) -> list[BotCommand]:
 
 
 async def check_claude(step) -> None:
-    """One tiny real request: catches a wrong key, an empty balance or an unsupported region before users do."""
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        step(False, "Claude API: ключ ANTHROPIC_API_KEY не задан (console.anthropic.com → API keys)")
-        return
+    """One tiny real request: catches a missing login, a wrong key, an empty balance or an unsupported region."""
     model = os.getenv("HOOKBOT_MODEL", DEFAULT_MODEL)
+    client = default_client()
+    if isinstance(client, claude_code.ClaudeCodeClient):
+        if not claude_code.available(client.binary):
+            step(False, f"Claude: Claude Code не найден ({client.binary}) — установите его заново: ./scripts/setup_bot.sh")
+            return
+        if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN") and not await claude_code.logged_in(client.binary):
+            step(False, "Claude: Claude Code не вошёл в аккаунт — выполните `claude auth login` (ваша подписка Claude)")
+            return
+        schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"],
+                  "additionalProperties": False}
+        try:
+            reply = await client.create(model=model, system="Отвечай строго по схеме.",
+                                        messages=[{"role": "user", "content": [{"type": "text", "text": "Верни ok=true"}]}],
+                                        output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}})
+            ok = json.loads(reply.content[0].text).get("ok") is True
+            step(ok, f"Claude: работает через вашу подписку (Claude Code), модель {model}" if ok
+                 else "Claude: Claude Code ответил не по схеме — обновите его: `claude update`")
+        except (claude_code.ClaudeCodeError, json.JSONDecodeError) as exc:
+            step(False, f"Claude: {exc}")
+        return
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        step(False, "Claude: нет ни Claude Code с вашей подпиской, ни ключа API — установите Claude Code и выполните "
+                    "`claude auth login` (docs/TELEGRAM_PRIVATE.md)")
+        return
     try:
-        async with anthropic.AsyncAnthropic() as client:
-            await client.messages.create(model=model, max_tokens=1, messages=[{"role": "user", "content": "ping"}])
+        async with anthropic.AsyncAnthropic() as api:
+            await api.messages.create(model=model, max_tokens=1, messages=[{"role": "user", "content": "ping"}])
         step(True, f"Claude API: ключ работает, модель {model}")
     except anthropic.AuthenticationError:
         step(False, "Claude API: ключ не принят — создайте новый в console.anthropic.com → API keys")
@@ -123,6 +146,10 @@ async def main() -> None:
         code = await check(settings, memory)
         memory.close()
         raise SystemExit(code)
+    if not settings.private and isinstance(default_client(), claude_code.ClaudeCodeClient):
+        # Anthropic's terms: a Claude subscription is for its owner's individual use, not a service for others.
+        raise SystemExit("Открытый бот (BOT_PRIVATE=0) не может работать на подписке Claude: задайте ANTHROPIC_API_KEY "
+                         "(console.anthropic.com) или верните BOT_PRIVATE=1")
     botdb = BotStorage(memory)
     botdb.apply_owner_niche(settings.admin_ids, settings.owner_niche)
     engine = HookEngine(memory, reflect_every=settings.reflect_every)

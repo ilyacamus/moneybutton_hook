@@ -1,6 +1,7 @@
 #!/bin/bash
 # One command to set up the private Telegram bot on macOS or Linux (a VPS):
-# Python environment, the private data, settings (asked once), a check, and autostart.
+# Python environment, the private data, settings (asked once), Claude through the owner's subscription
+# (Claude Code, no API key), a check, and autostart.
 #   ./scripts/setup_bot.sh
 # Safe to run again: an existing database and settings are kept.
 set -euo pipefail
@@ -62,7 +63,29 @@ default() {  # default KEY VALUE — only when not set yet
 }
 ask TELEGRAM_BOT_TOKEN "Токен бота от @BotFather (ввод скрыт)" secret
 ask ADMIN_IDS "Ваш Telegram id (пришлёт @userinfobot)"
-ask ANTHROPIC_API_KEY "Ключ Claude API, console.anthropic.com → API keys (ввод скрыт)" secret
+
+# Claude: the owner's own subscription through Claude Code (no API key). A key in .env takes over if set.
+if [ -z "$("${ENV_TOOL[@]}" ANTHROPIC_API_KEY)" ]; then
+  say "Claude: ваша подписка через Claude Code"
+  CLAUDE_BIN="$(command -v claude || true)"
+  [ -n "$CLAUDE_BIN" ] || { [ -x "$HOME/.local/bin/claude" ] && CLAUDE_BIN="$HOME/.local/bin/claude"; }
+  if [ -z "$CLAUDE_BIN" ]; then
+    read -r -p "Установить Claude Code официальным установщиком с claude.ai? [Y/n] " answer
+    case "$answer" in
+      [nN]*) echo "Без Claude Code нужен ключ API: впишите ANTHROPIC_API_KEY в .env и запустите скрипт снова."; exit 1 ;;
+    esac
+    curl -fsSL https://claude.ai/install.sh | bash
+    CLAUDE_BIN="$(command -v claude || echo "$HOME/.local/bin/claude")"
+  fi
+  if [ -z "$("${ENV_TOOL[@]}" CLAUDE_CODE_OAUTH_TOKEN)" ]; then
+    echo "Бот будет работать от вашей подписки Claude (тот же аккаунт, что в приложении)."
+    echo "Сейчас откроется браузер: подтвердите вход — Claude Code покажет токен на год для работы без вас."
+    "$CLAUDE_BIN" setup-token
+    ask CLAUDE_CODE_OAUTH_TOKEN "Скопируйте и вставьте токен, который показан выше (ввод скрыт)" secret
+  fi
+  "${ENV_TOOL[@]}" HOOKBOT_BACKEND claude-code
+  "${ENV_TOOL[@]}" CLAUDE_CODE_BIN "$CLAUDE_BIN"   # autostart has a short PATH: keep the full path
+fi
 default BOT_PRIVATE 1
 default OWNER_NICHE "Крипта и трейдинг"
 default OWNER_WORKSPACE kanyuka

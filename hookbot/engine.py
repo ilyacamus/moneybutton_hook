@@ -12,7 +12,7 @@ from typing import Any, TypeVar
 import anthropic
 import pydantic
 
-from . import prompts
+from . import claude_code, prompts
 from .core import breakout, corpus, features, knowledge, learning, literature, validation
 from .core.learning import Calibration, LearningContext
 from .core.memory import MemoryStore
@@ -111,6 +111,16 @@ def _criteria(evaluation: Evaluation) -> dict[str, int]:
     }
 
 
+def default_client() -> Any:
+    """The Claude API with ANTHROPIC_API_KEY; without a key, Claude Code signed in with the owner's subscription.
+    ``HOOKBOT_BACKEND=api`` or ``claude-code`` forces one of them."""
+    backend = os.getenv("HOOKBOT_BACKEND", "auto")
+    if backend == "claude-code" or (backend == "auto" and not os.getenv("ANTHROPIC_API_KEY")
+                                    and claude_code.available()):
+        return claude_code.ClaudeCodeClient()
+    return anthropic.AsyncAnthropic()
+
+
 class HookEngine:
     def __init__(
         self,
@@ -124,7 +134,7 @@ class HookEngine:
         reflect_every: int = 5,
     ):
         self.store = store
-        self.client = client or anthropic.AsyncAnthropic()
+        self.client = client or default_client()
         self.model = model or os.getenv("HOOKBOT_MODEL", DEFAULT_MODEL)
         self.effort = effort or os.getenv("HOOKBOT_EFFORT", DEFAULT_EFFORT)
         if fallbacks is None:
@@ -166,6 +176,9 @@ class HookEngine:
             params.update(betas=[FALLBACK_BETA], fallbacks="default")
         try:
             return await self.client.beta.messages.create(**params)
+        except claude_code.ClaudeCodeError as exc:
+            log.error("Claude Code failed: %s", exc)
+            raise EngineError(str(exc)) from exc
         except anthropic.RateLimitError as exc:
             raise EngineError("Сервис перегружен, попробуйте через минуту.") from exc
         except anthropic.APIStatusError as exc:

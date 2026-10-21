@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -5,6 +6,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
+# Tests never call a real model: without an explicit client the engine uses the API client, not the claude CLI.
+os.environ.setdefault("HOOKBOT_BACKEND", "api")
 
 from fakes import FakeClient  # noqa: E402
 
