@@ -274,8 +274,10 @@ class Corpus:
         return sorted({want, *(t for t in stored if t and niches.canonical(t) == want)})
 
     def niche_rows(self, niche: str) -> list[dict[str, Any]]:
-        """The niche's knowledge: studied reels of other creators (a client's own reels only calibrate the client)."""
-        return [r for r in self.studied(niche) if r["source"] not in OWN_SOURCES]
+        """The niche's knowledge: studied on-topic reels of other creators (a client's own reels only calibrate
+        the client; a creator's off-topic reels say nothing about the niche)."""
+        return [r for r in self.studied(niche)
+                if r["source"] not in OWN_SOURCES and (r["analysis"] or {}).get("topic") != "other"]
 
     def niches(self) -> list[str]:
         return sorted({niches.canonical(r[0]) for r in self.conn.execute(
