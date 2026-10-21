@@ -259,3 +259,38 @@ def test_owner_niche_and_private_settings(monkeypatch, tmp_path):
     settings = Settings.from_env()
     assert settings.private and settings.allowed(123) and not settings.allowed(5)
     assert "balance" not in {c.command for c in commands(settings)}
+
+
+async def test_owner_works_in_the_channel_workspace(env):
+    from telegram_bot.storage import set_workspace_aliases
+
+    private(env, {USER_ID})
+    env.memory.update_profile("kanyuka", niche="крипто-трейдинг")
+    set_workspace_aliases({USER_ID: "kanyuka"})
+    try:
+        await env.text("/start")
+        assert "Крипта" in env.session.texts()[-1] or "крипто" in env.session.texts()[-1]
+        await env.text("/score Хотите больше клиентов из таргета?")
+        assert "Хотите больше клиентов из таргета?" in {h["text"] for h in env.memory.recent_hooks("kanyuka", limit=20)}
+        assert env.memory.recent_hooks(f"tg:{USER_ID}") == []
+    finally:
+        set_workspace_aliases({})
+    assert workspace_of(USER_ID) == f"tg:{USER_ID}"
+
+
+def test_daily_backups_and_model_refresh(tmp_path):
+    from datetime import datetime, timezone
+
+    from hookbot.core.corpus import Corpus
+    from telegram_bot.scheduler import backup_database, refresh_niche_models
+    from test_niches import synthetic_pack
+
+    memory = MemoryStore(tmp_path / "bot.db")
+    for day in (1, 2, 3):
+        backup_database(memory, keep=2, now=datetime(2026, 10, day, tzinfo=timezone.utc))
+    assert sorted(p.name for p in (tmp_path / "backups").iterdir()) == ["hookbot-20261002.db", "hookbot-20261003.db"]
+    assert MemoryStore(tmp_path / "backups" / "hookbot-20261003.db").get_profile("x")["niche"] == ""
+    assert refresh_niche_models(memory) == []  # nothing studied yet
+    Corpus(memory).import_pack(synthetic_pack())
+    assert refresh_niche_models(memory) == ["crypto_trading"]
+    assert refresh_niche_models(memory) == []  # no new reels: the model is kept

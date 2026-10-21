@@ -7,7 +7,7 @@
 <dict>
   <key>Label</key><string>com.moneybutton.bot</string>
   <key>ProgramArguments</key>
-  <array><string>/bin/bash</string><string>REPO/scripts/macos/run_bot.sh</string></array>
+  <array><string>/bin/bash</string><string>REPO/scripts/run_bot.sh</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>60</integer>

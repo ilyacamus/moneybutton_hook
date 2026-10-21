@@ -50,8 +50,17 @@ CREATE TABLE IF NOT EXISTS result_bonuses (
 """
 
 
+_WORKSPACE_ALIASES: dict[int, str] = {}
+
+
+def set_workspace_aliases(aliases: dict[int, str]) -> None:
+    """Let owners work in an existing workspace (e.g. their channel audited from the CLI) instead of ``tg:<id>``."""
+    _WORKSPACE_ALIASES.clear()
+    _WORKSPACE_ALIASES.update(aliases)
+
+
 def workspace_of(user_id: int) -> str:
-    return f"tg:{user_id}"
+    return _WORKSPACE_ALIASES.get(user_id) or f"tg:{user_id}"
 
 
 class BotStorage:

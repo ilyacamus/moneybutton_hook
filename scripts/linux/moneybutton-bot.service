@@ -1,0 +1,15 @@
+# systemd user service for the private Telegram bot. Installed by scripts/setup_bot.sh (REPO is replaced
+# with the repository path): ~/.config/systemd/user/moneybutton-bot.service
+[Unit]
+Description=MoneyButton private Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=REPO
+ExecStart=/bin/bash REPO/scripts/run_bot.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

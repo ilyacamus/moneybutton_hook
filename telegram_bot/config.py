@@ -58,6 +58,8 @@ class Settings:
     support_contact: str = ""
     private: bool = False  # only ADMIN_IDS may use the bot; nobody else is answered beyond a refusal
     owner_niche: str = ""  # the owners' niche, set in their profile at start (e.g. «Крипта и трейдинг»)
+    owner_workspace: str = ""  # the owners work in this workspace (e.g. their channel audited from the CLI)
+    backup_keep: int = 7  # daily database backups kept next to the database
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -80,6 +82,8 @@ class Settings:
             support_contact=os.getenv("SUPPORT_CONTACT", ""),
             private=private,
             owner_niche=os.getenv("OWNER_NICHE", ""),
+            owner_workspace=os.getenv("OWNER_WORKSPACE", ""),
+            backup_keep=int(os.getenv("BACKUP_KEEP", cls.backup_keep)),
         )
         if os.getenv("HOOKBOT_PACKS"):
             kwargs["packs"] = parse_packs(os.environ["HOOKBOT_PACKS"])

@@ -168,6 +168,18 @@ class MemoryStore:
     def close(self) -> None:
         self.conn.close()
 
+    def backup(self, path: str | Path) -> Path:
+        """A consistent copy of the database while it is in use (SQLite online backup)."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        target = sqlite3.connect(str(path))
+        try:
+            with self.lock:
+                self.conn.backup(target)
+        finally:
+            target.close()
+        return path
+
     # ------------------------------------------------------------------ #
     # Workspaces (a Telegram user, a CLI user, a plugin install)
     # ------------------------------------------------------------------ #
